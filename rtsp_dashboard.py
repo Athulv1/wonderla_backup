@@ -3,22 +3,34 @@ Modern Dashboard for RTSP Head Counter
 Displays real-time statistics with visual banners
 """
 
+import sys
+import os
+import warnings
+
 from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
 from ultralytics import YOLO
 import json
-import os
 from collections import defaultdict
 from scipy.spatial import distance as dist
 import time
 import threading
 
+# Import database handler (SQLite - no server required)
+try:
+    from database_handler_sqlite import DatabaseHandler
+    DB_AVAILABLE = True
+    print("✓ SQLite database enabled (data saved to head_counter.db)")
+except ImportError:
+    print("⚠️  Database handler not available - running without database")
+    DB_AVAILABLE = False
+
 
 class CentroidTracker:
     """Track objects across frames using centroids and bounding boxes"""
     
-    def __init__(self, max_disappeared=50, max_distance=80):
+    def __init__(self, max_disappeared=80, max_distance=120):
         self.next_object_id = 0
         self.objects = {}  # Centroids
         self.bboxes = {}  # Bounding boxes for better tracking
@@ -101,22 +113,46 @@ class CentroidTracker:
 class RTSPStreamProcessor:
     """Process RTSP stream with head counting"""
     
-    def __init__(self, rtsp_url, model_path='yolov8s.pt', conf_threshold=0.25, box_shrink=0.4):
+    def __init__(self, rtsp_url, model_path='yolo11x.pt', conf_threshold=0.10, box_shrink=0.2):
         self.rtsp_url = rtsp_url
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
+        self.iou_threshold = 0.60  # IoU threshold for NMS - higher for head merging
+        
+        # Database handler (SQLite - no config needed)
+        self.db_handler = None
+        if DB_AVAILABLE:
+            try:
+                self.db_handler = DatabaseHandler()  # SQLite uses default db path
+                print("✓ Database handler initialized")
+            except Exception as e:
+                print(f"⚠️  Could not initialize database: {e}")
         
         # Counters
+        # Restore counts from database if available
         self.in_count = 0
         self.out_count = 0
         self.pool_count = 0
         self.current_heads = 0
+        self.peak_pool_count = 0
+        if self.db_handler:
+            summary = self.db_handler.get_today_summary()
+            if summary:
+                self.in_count = summary.get('total_in', 0)
+                self.out_count = summary.get('total_out', 0)
+                self.peak_pool_count = summary.get('peak_pool_count', 0)
+                self.pool_count = self.in_count - self.out_count
+                print(f"✓ Restored counts from DB: IN={self.in_count}, OUT={self.out_count}, PEAK={self.peak_pool_count}")
         
-        # Line crossing tracking
-        self.tracker = CentroidTracker(max_disappeared=60, max_distance=100)
-        self.previous_positions = {}  # Store previous Y positions
+        # Line crossing tracking optimized for top-angle head detection
+        self.tracker = CentroidTracker(max_disappeared=120, max_distance=100)
+        self.object_zones = {}  # Track which zone each object was last seen in
         self.counted_ids = set()
+        
+        # Temporal smoothing for stable counts
+        self.count_history = []  # Store last 5 count changes
+        self.history_size = 5
         
         # Stream state
         self.cap = None
@@ -128,6 +164,9 @@ class RTSPStreamProcessor:
         self.fps = 0
         self.frame_count = 0
         self.start_time = time.time()
+        
+        # Auto-reset tracking
+        self.last_reset_date = time.strftime('%Y-%m-%d')
         
         # Logging
         self.log_file = 'logs.html'
@@ -145,22 +184,21 @@ class RTSPStreamProcessor:
                 config_type = config.get('type', 'zones')
                 
                 if config_type == 'two_lines':
-                    # Two-line configuration
-                    self.in_line_y = config.get('in_line_y', 300)
-                    self.out_line_y = config.get('out_line_y', 500)
+                    # Two-line configuration - use middle point between lines
+                    in_line = config.get('in_line_y', 500)
+                    out_line = config.get('out_line_y', 300)
+                    self.partition_y = (in_line + out_line) // 2
                     self.config_type = 'two_lines'
                 else:
-                    # Legacy zone configuration - convert to two lines
+                    # Legacy zone configuration
                     self.upper_zone = config.get('upper_zone', [0, 0, 640, 120])
                     self.lower_zone = config.get('lower_zone', [0, 120, 640, 288])
-                    self.out_line_y = self.upper_zone[3]  # Use current line for OUT
-                    self.in_line_y = self.lower_zone[1]  # Create new line for IN
+                    self.partition_y = self.upper_zone[3]  # Bottom of upper zone
                     self.config_type = 'zones'
         else:
-            # Defaults
-            self.out_line_y = 300
-            self.in_line_y = 500
-            self.config_type = 'two_lines'
+            # Default - use middle of frame (will be set dynamically)
+            self.partition_y = 360  # Default for 720p
+            self.config_type = 'partition'
     
     def init_log_file(self):
         """Initialize HTML log file"""
@@ -196,11 +234,12 @@ class RTSPStreamProcessor:
             f.write(html_header)
     
     def log_event(self, event_type, object_id):
-        """Log counting event to HTML file"""
+        """Log counting event to HTML file and database"""
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         event_class = 'in' if event_type == 'IN' else 'out'
         net_count = self.in_count - self.out_count
         
+        # HTML logging
         log_entry = f'''        <tr>
             <td>{timestamp}</td>
             <td class="{event_class}">{event_type}</td>
@@ -212,36 +251,76 @@ class RTSPStreamProcessor:
 '''
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(log_entry)
+        
+        # Database logging
+        if self.db_handler:
+            self.db_handler.log_event(event_type, object_id, self.in_count, self.out_count, net_count)
     
     def connect_stream(self):
-        """Connect to RTSP stream with error recovery"""
-        # Suppress H.264 decoding errors
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;2048000|fflags;nobuffer|flags;low_delay"
-        os.environ["OPENCV_LOG_LEVEL"] = "ERROR"  # Suppress verbose errors
+        """Connect to RTSP stream with maximum error recovery"""
+        # FFmpeg options optimized to handle packet loss and corruption
+        if sys.platform == 'win32':
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|"  # TCP for reliable delivery
+                "buffer_size;16777216|"  # 16MB buffer (maximum)
+                "max_delay;3000000|"  # 3 second tolerance
+                "reorder_queue_size;1000|"  # Large reorder buffer
+                "stimeout;10000000|"  # 10 second socket timeout
+                "analyzeduration;10000000|"  # Analyze for 10 seconds
+                "probesize;10000000|"  # Probe 10MB of stream
+                "err_detect;ignore_err|"  # Ignore decoding errors
+                "fflags;discardcorrupt+nobuffer|"  # Discard corrupted frames
+                "loglevel;fatal"  # Only show fatal errors
+            )
+        else:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|buffer_size;16777216|max_delay;3000000|"
+                "reorder_queue_size;1000|stimeout;10000000|err_detect;ignore_err|"
+                "fflags;discardcorrupt+nobuffer|loglevel;fatal"
+            )
+        
+        os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
+        os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"  # AV_LOG_QUIET
+        cv2.setLogLevel(0)  # Silent
         
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         
-        # Optimized settings for stability
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer to reduce lag
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
-        self.cap.set(cv2.CAP_PROP_FPS, 15)  # Lower FPS for stability
+        # Enhanced error recovery settings
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)  # Large buffer
+        self.cap.set(cv2.CAP_PROP_FPS, 15)  # Match camera FPS
         
         return self.cap.isOpened()
     
     def process_frame(self, frame):
         """Process a single frame with error handling"""
         try:
-            # Run detection with optimized GPU settings
-            results = self.model(frame, conf=self.conf_threshold, verbose=False, 
-                               imgsz=1024, device='cuda', half=True, 
-                               stream_buffer=True, max_det=50)
+            # Run detection with YOLOv11x - optimized for top-angle head detection
+            results = self.model.track(
+                frame, 
+                conf=self.conf_threshold,
+                iou=self.iou_threshold,
+                verbose=False,
+                imgsz=1280,  # Larger for small/distant heads
+                device='cuda',
+                half=True,  # FP16 for efficiency
+                persist=True,
+                tracker='bytetrack.yaml',
+                max_det=100,  # Detect up to 100 people
+                classes=[0]  # Only detect persons
+            )
             
             # Extract detections
             detections = []
+            min_box_area = 400  # Minimum 20x20 pixels to filter noise
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    
+                    # Filter by minimum size (reject tiny noise)
+                    box_area = (x2 - x1) * (y2 - y1)
+                    if box_area < min_box_area:
+                        continue
                     
                     # Shrink bounding box
                     if self.box_shrink > 0:
@@ -262,58 +341,70 @@ class RTSPStreamProcessor:
             objects = self.tracker.update(detections)
             self.current_heads = len(objects)
             
-            # Check line crossings for both IN and OUT lines
+            # Get frame height for partition
+            frame_height = frame.shape[0]
+            if not hasattr(self, 'partition_y') or self.partition_y > frame_height:
+                self.partition_y = frame_height // 2
+            
+            # Check zone transitions for counting
             for object_id, centroid in objects.items():
                 cx, cy = centroid
                 
-                # Get previous position
-                prev_y = self.previous_positions.get(object_id)
+                # Determine current zone (upper or lower)
+                current_zone = 'upper' if cy < self.partition_y else 'lower'
                 
-                # Detect line crossings
-                if prev_y is not None:
-                    # Check IN line crossing (downward)
-                    if f'in_{object_id}' not in self.counted_ids:
-                        if prev_y < self.in_line_y <= cy:
+                # Get previous zone
+                previous_zone = self.object_zones.get(object_id)
+                
+                # Detect zone transition and count
+                if previous_zone is not None and previous_zone != current_zone:
+                    if object_id not in self.counted_ids:
+                        # Upper -> Lower = IN
+                        if previous_zone == 'upper' and current_zone == 'lower':
                             self.in_count += 1
-                            self.counted_ids.add(f'in_{object_id}')
+                            self.counted_ids.add(object_id)
                             self.log_event('IN', object_id)
-                    
-                    # Check OUT line crossing (upward)
-                    if f'out_{object_id}' not in self.counted_ids:
-                        if prev_y > self.out_line_y >= cy:
+                        # Lower -> Upper = OUT
+                        elif previous_zone == 'lower' and current_zone == 'upper':
                             self.out_count += 1
-                            self.counted_ids.add(f'out_{object_id}')
+                            self.counted_ids.add(object_id)
                             self.log_event('OUT', object_id)
                 
-                # Update previous position
-                self.previous_positions[object_id] = cy
+                # Update zone tracking
+                self.object_zones[object_id] = current_zone
                 
                 # Draw centroid and ID
                 cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
                 cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
             
-            # Clean up old positions for disappeared objects
+            # Clean up old zones for disappeared objects
             tracked_ids = set(objects.keys())
-            disappeared_ids = set(self.previous_positions.keys()) - tracked_ids
+            disappeared_ids = set(self.object_zones.keys()) - tracked_ids
             for obj_id in disappeared_ids:
-                del self.previous_positions[obj_id]
-                # Remove from counted set when object disappears
-                self.counted_ids.discard(f'in_{obj_id}')
-                self.counted_ids.discard(f'out_{obj_id}')
+                del self.object_zones[obj_id]
+                self.counted_ids.discard(obj_id)
             
-            # Draw IN line (green)
-            cv2.line(frame, (0, self.in_line_y), (frame.shape[1], self.in_line_y), (0, 255, 0), 3)
-            cv2.putText(frame, "IN LINE", (10, self.in_line_y - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            # Draw OUT line (red)
-            cv2.line(frame, (0, self.out_line_y), (frame.shape[1], self.out_line_y), (0, 0, 255), 3)
-            cv2.putText(frame, "OUT LINE", (10, self.out_line_y + 25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # Draw partition line
+            cv2.line(frame, (0, self.partition_y), (frame.shape[1], self.partition_y), (255, 255, 0), 3)
+            cv2.putText(frame, "UPPER ZONE", (10, self.partition_y - 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.putText(frame, "LOWER ZONE", (10, self.partition_y + 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
             # Calculate pool count
             self.pool_count = self.in_count - self.out_count
+            
+            # Update peak pool count
+            if self.pool_count > self.peak_pool_count:
+                self.peak_pool_count = self.pool_count
+            
+            # Update database statistics periodically (every 10 seconds)
+            if hasattr(self, 'last_db_update'):
+                if time.time() - self.last_db_update > 10:
+                    self.update_database_stats()
+            else:
+                self.last_db_update = time.time()
             
             return frame
             
@@ -321,6 +412,26 @@ class RTSPStreamProcessor:
             # Return original frame if processing fails
             print(f"Frame processing error (skipping): {str(e)[:50]}")
             return frame
+    
+    def update_database_stats(self):
+        """Update database with current statistics"""
+        if self.db_handler:
+            try:
+                # Update daily summary
+                self.db_handler.update_daily_summary(
+                    self.in_count, self.out_count, self.pool_count, self.peak_pool_count
+                )
+                # Update hourly statistics
+                self.db_handler.update_hourly_statistics(
+                    self.in_count, self.out_count, self.pool_count
+                )
+                # Log system health
+                self.db_handler.log_system_health(
+                    self.fps, self.current_heads, 'active'
+                )
+                self.last_db_update = time.time()
+            except Exception as e:
+                print(f"⚠️  Database update error: {e}")
     
     def start(self):
         """Start processing stream"""
@@ -333,6 +444,7 @@ class RTSPStreamProcessor:
         reconnect_attempts = 0
         max_reconnects = 10
         last_valid_frame = None
+        consecutive_errors = 0
         
         if not self.connect_stream():
             print("Failed to connect to RTSP stream")
@@ -341,48 +453,78 @@ class RTSPStreamProcessor:
         print(f"✓ Connected to RTSP stream")
         
         while self.is_running:
-            ret, frame = self.cap.read()
-            
-            if not ret or frame is None:
-                print(f"Stream disconnected (attempt {reconnect_attempts + 1}/{max_reconnects})")
+            try:
+                ret, frame = self.cap.read()
                 
-                # Use last valid frame while reconnecting
-                if last_valid_frame is not None:
-                    with self.lock:
-                        self.frame = last_valid_frame
-                
-                self.cap.release()
-                time.sleep(1)  # Shorter wait
-                
-                reconnect_attempts += 1
-                if reconnect_attempts >= max_reconnects:
-                    print("Max reconnect attempts reached")
-                    break
-                
-                if not self.connect_stream():
+                if not ret or frame is None:
+                    consecutive_errors += 1
+                    
+                    # Only print every 5 errors to avoid spam
+                    if consecutive_errors % 5 == 1:
+                        print(f"Stream error (attempt {reconnect_attempts + 1}/{max_reconnects})")
+                    
+                    # Use last valid frame while reconnecting
+                    if last_valid_frame is not None:
+                        with self.lock:
+                            self.frame = last_valid_frame
+                    
+                    # Try to recover after multiple errors
+                    if consecutive_errors > 10:
+                        self.cap.release()
+                        time.sleep(0.5)  # Brief wait
+                        
+                        reconnect_attempts += 1
+                        if reconnect_attempts >= max_reconnects:
+                            print("Max reconnect attempts reached")
+                            break
+                        
+                        if not self.connect_stream():
+                            continue
+                        else:
+                            reconnect_attempts = 0
+                            consecutive_errors = 0
                     continue
-                else:
-                    reconnect_attempts = 0  # Reset on successful connect
-                continue
-            
-            # Valid frame received
-            reconnect_attempts = 0
-            
-            # Flip frame vertically
-            frame = cv2.flip(frame, 0)
-            self.frame_count += 1
-            last_valid_frame = frame.copy()  # Keep backup
-            
-            # Process frame
-            processed_frame = self.process_frame(frame)
-            
-            # Calculate FPS
-            elapsed = time.time() - self.start_time
-            self.fps = self.frame_count / elapsed if elapsed > 0 else 0
-            
-            # Store frame
-            with self.lock:
-                self.frame = processed_frame
+                
+                # Valid frame received - reset error counter
+                consecutive_errors = 0
+                reconnect_attempts = 0
+                
+                # Check for midnight reset
+                current_date = time.strftime('%Y-%m-%d')
+                if current_date != self.last_reset_date:
+                    print(f"\n🔄 Midnight auto-reset triggered: {current_date}")
+                    self.in_count = 0
+                    self.out_count = 0
+                    self.pool_count = 0
+                    self.counted_ids.clear()
+                    self.last_reset_date = current_date
+                    self.log_event('RESET', 'AUTO')
+                
+                # Flip frame vertically
+                frame = cv2.flip(frame, 0)
+                self.frame_count += 1
+                
+                # Print FPS every 30 frames
+                if self.frame_count % 30 == 0:
+                    elapsed = time.time() - self.start_time
+                    current_fps = self.frame_count / elapsed if elapsed > 0 else 0
+                    print(f"Processing... FPS: {current_fps:.1f} | Heads: {self.current_heads} | IN: {self.in_count} | OUT: {self.out_count}")
+                
+                last_valid_frame = frame.copy()  # Keep backup
+                
+                # Process frame
+                processed_frame = self.process_frame(frame)
+                
+                # Calculate FPS
+                elapsed = time.time() - self.start_time
+                self.fps = self.frame_count / elapsed if elapsed > 0 else 0
+                
+                # Store frame
+                with self.lock:
+                    self.frame = processed_frame
+            except Exception as e:
+                print(f"Loop error: {str(e)[:50]}")
+                time.sleep(0.1)
     
     def get_frame(self):
         """Get current frame"""
@@ -405,6 +547,10 @@ class RTSPStreamProcessor:
         self.is_running = False
         if self.cap:
             self.cap.release()
+        if self.db_handler:
+            # Final database update before closing
+            self.update_database_stats()
+            self.db_handler.close()
 
 
 # Flask application
@@ -493,25 +639,21 @@ def health():
 
 
 def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='RTSP Head Counter Dashboard')
-    parser.add_argument('--rtsp', required=True, help='RTSP stream URL')
-    parser.add_argument('--model', default='yolov8n.pt', help='YOLO model path')
-    parser.add_argument('--conf', type=float, default=0.25, help='Confidence threshold')
-    parser.add_argument('--box-shrink', type=float, default=0.4, help='Box shrink factor')
-    parser.add_argument('--host', default='0.0.0.0', help='Host address')
-    parser.add_argument('--port', type=int, default=5000, help='Port number')
-    
-    args = parser.parse_args()
+    # Configuration optimized for top-angle head detection with RTX 3060
+    rtsp_url = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
+    model_path = 'yolo11x.pt'  # YOLOv11x - high accuracy for head detection
+    conf_threshold = 0.10  # Low threshold for head-only views
+    box_shrink = 0.2  # Less aggressive for small heads
+    host = '0.0.0.0'
+    port = 5000
     
     # Initialize processor
     global processor
     processor = RTSPStreamProcessor(
-        rtsp_url=args.rtsp,
-        model_path=args.model,
-        conf_threshold=args.conf,
-        box_shrink=args.box_shrink
+        rtsp_url=rtsp_url,
+        model_path=model_path,
+        conf_threshold=conf_threshold,
+        box_shrink=box_shrink
     )
     
     # Start processing
@@ -521,11 +663,11 @@ def main():
     print(f"\n{'='*60}")
     print(f"🎯 RTSP Head Counter Dashboard")
     print(f"{'='*60}")
-    print(f"📺 Stream: {args.rtsp}")
-    print(f"🌐 Dashboard: http://{args.host}:{args.port}")
+    print(f"📺 Stream: {rtsp_url}")
+    print(f"🌐 Dashboard: http://{host}:{port}")
     print(f"{'='*60}\n")
     
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True)
 
 
 if __name__ == '__main__':
