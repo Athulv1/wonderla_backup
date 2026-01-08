@@ -392,8 +392,8 @@ class RTSPStreamProcessor:
             cv2.putText(frame, "LOWER ZONE", (10, self.partition_y + 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
-            # Calculate pool count (ensure it doesn't go negative)
-            self.pool_count = max(0, self.in_count - self.out_count)
+            # Calculate pool count
+            self.pool_count = self.in_count - self.out_count
             
             # Update peak pool count
             if self.pool_count > self.peak_pool_count:
@@ -533,23 +533,11 @@ class RTSPStreamProcessor:
     
     def get_stats(self):
         """Get current statistics"""
-        # If pool count would be negative, set both in and out to the higher value
-        in_count = self.in_count
-        out_count = self.out_count
-        pool_count = in_count - out_count
-        
-        if pool_count < 0:
-            # Set both to whichever is higher
-            higher_count = max(in_count, out_count)
-            in_count = higher_count
-            out_count = higher_count
-            pool_count = 0
-        
         return {
-            'in_count': max(0, in_count),
-            'out_count': max(0, out_count),
-            'pool_count': max(0, pool_count),
-            'current_heads': max(0, self.current_heads),
+            'in_count': self.in_count,
+            'out_count': self.out_count,
+            'pool_count': self.pool_count,
+            'current_heads': self.current_heads,
             'fps': round(self.fps, 1),
             'timestamp': time.time()
         }

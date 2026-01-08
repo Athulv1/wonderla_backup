@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Head Counter Logs</title>
+    <style>
+        body { font-family: Arial; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        th { background: #667eea; color: white; padding: 12px; text-align: left; }
+        td { padding: 10px; border-bottom: 1px solid #ddd; }
+        .in { color: #28a745; font-weight: bold; }
+        .out { color: #dc3545; font-weight: bold; }
+        tr:hover { background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <h1>Head Counter Event Logs</h1>
+    <p>Started: 2025-12-29 11:18:08</p>
+    <table>
+        <tr>
+            <th>Timestamp</th>
+            <th>Event</th>
+            <th>Object ID</th>
+            <th>Total IN</th>
+            <th>Total OUT</th>
+            <th>Net Count</th>
+        </tr>
+        <tr>
+            <td>2025-12-29 11:18:29</td>
+            <td class="out">OUT</td>
+            <td>#1</td>
+            <td>0</td>
+            <td>1</td>
+            <td>-1</td>
+        </tr>
+        <tr>
+            <td>2025-12-29 11:19:08</td>
+            <td class="in">IN</td>
+            <td>#4</td>
+            <td>1</td>
+            <td>1</td>
+            <td>0</td>
+        </tr>
+        <tr>
+            <td>2025-12-29 11:22:23</td>
+            <td class="in">IN</td>
+            <td>#11</td>
+            <td>2</td>
+            <td>1</td>
+            <td>1</td>
+        </tr>
+        <tr>
+            <td>2025-12-29 11:22:23</td>
+            <td class="in">IN</td>
+            <td>#13</td>
+            <td>3</td>
+            <td>1</td>
+            <td>2</td>
+        </tr>
