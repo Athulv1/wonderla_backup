@@ -136,6 +136,7 @@ class RTSPStreamProcessor:
         self.pool_count = 0
         self.current_heads = 0
         self.peak_pool_count = 0
+        self.missed_in_count = 0  # Track missed IN detections
         if self.db_handler:
             summary = self.db_handler.get_today_summary()
             if summary:
@@ -532,18 +533,34 @@ class RTSPStreamProcessor:
             return self.frame.copy() if self.frame is not None else None
     
     def get_stats(self):
-        """Get current statistics"""
-        # If pool count would be negative, set both in and out to the higher value
+        """Get current statistics with missed detection tracking"""
         in_count = self.in_count
         out_count = self.out_count
         pool_count = in_count - out_count
         
+        # Track missed IN detections when pool count goes negative
         if pool_count < 0:
-            # Set both to whichever is higher
-            higher_count = max(in_count, out_count)
-            in_count = higher_count
-            out_count = higher_count
+            missed_entries = abs(pool_count)
+            print(f"⚠️ Detection discrepancy: IN={in_count}, OUT={out_count}, Missed IN detections: {missed_entries}")
+            
+            # Track cumulative missed detections
+            self.missed_in_count += missed_entries
+            
+            # Auto-correct: adjust IN count to match OUT count
+            self.in_count = out_count
+            in_count = out_count
             pool_count = 0
+            
+            # Log correction event
+            if self.db_handler:
+                try:
+                    self.db_handler.log_event('CORRECTION', 0, self.in_count, self.out_count, pool_count)
+                except Exception as e:
+                    print(f"⚠️ Could not log correction: {e}")
+        
+        # Calculate detection accuracy
+        total_expected_in = in_count + self.missed_in_count
+        detection_accuracy = (in_count / total_expected_in * 100) if total_expected_in > 0 else 100
         
         return {
             'in_count': max(0, in_count),
@@ -551,6 +568,8 @@ class RTSPStreamProcessor:
             'pool_count': max(0, pool_count),
             'current_heads': max(0, self.current_heads),
             'fps': round(self.fps, 1),
+            'missed_in_count': self.missed_in_count,
+            'detection_accuracy': round(detection_accuracy, 1),
             'timestamp': time.time()
         }
     
@@ -634,6 +653,7 @@ def reset_counts():
         processor.in_count = 0
         processor.out_count = 0
         processor.pool_count = 0
+        processor.missed_in_count = 0
         processor.counted_ids.clear()
         return jsonify({'success': True, 'message': 'Counters reset successfully'})
     return jsonify({'success': False, 'error': 'No active processor'})

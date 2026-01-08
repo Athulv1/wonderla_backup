@@ -749,6 +749,10 @@
                                     <div class="pool-stat-value" id="fps-stat">0</div>
                                 </div>
                                 <div class="pool-stat">
+                                    <div class="pool-stat-label">⚠️ Missed IN</div>
+                                    <div class="pool-stat-value" id="missed-in" style="color: #ffc107;">0</div>
+                                </div>
+                                <div class="pool-stat">
                                     <div class="pool-stat-label">Occupancy Rate</div>
                                     <div class="pool-stat-value" id="occupancy-rate">0%</div>
                                 </div>
@@ -864,6 +868,13 @@
                     if (total > 0) {
                         document.getElementById('in-bar').style.width = ((data.in_count / total) * 100) + '%';
                         document.getElementById('out-bar').style.width = ((data.out_count / total) * 100) + '%';
+                    }
+                    
+                    // Update missed detections
+                    const missedInEl = document.getElementById('missed-in');
+                    if (missedInEl) {
+                        missedInEl.textContent = data.missed_in_count || 0;
+                        missedInEl.style.color = data.missed_in_count > 0 ? '#ffc107' : '#38ef7d';
                     }
                     
                     // Update peak
