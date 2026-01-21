@@ -434,6 +434,27 @@ class RTSPStreamProcessor:
             except Exception as e:
                 print(f"⚠️  Database update error: {e}")
     
+    def log_heartbeat(self):
+        """Log system heartbeat for downtime detection"""
+        if self.db_handler:
+            try:
+                self.db_handler.log_system_health(
+                    self.fps, self.current_heads, 'active'
+                )
+            except Exception as e:
+                print(f"⚠️  Heartbeat logging error: {e}")
+    
+    def get_downtime_periods(self):
+        """Detect downtime periods from system health logs"""
+        if not self.db_handler:
+            return []
+        
+        try:
+            return self.db_handler.detect_downtime_gaps(gap_threshold_minutes=5)
+        except Exception as e:
+            print(f"⚠️  Downtime detection error: {e}")
+            return []
+    
     def start(self):
         """Start processing stream"""
         self.is_running = True
@@ -510,6 +531,8 @@ class RTSPStreamProcessor:
                     elapsed = time.time() - self.start_time
                     current_fps = self.frame_count / elapsed if elapsed > 0 else 0
                     print(f"Processing... FPS: {current_fps:.1f} | Heads: {self.current_heads} | IN: {self.in_count} | OUT: {self.out_count}")
+                    # Log heartbeat for downtime detection
+                    self.log_heartbeat()
                 
                 last_valid_frame = frame.copy()  # Keep backup
                 
@@ -533,7 +556,7 @@ class RTSPStreamProcessor:
             return self.frame.copy() if self.frame is not None else None
     
     def get_stats(self):
-        """Get current statistics with missed detection tracking"""
+        """Get current statistics with missed detection tracking and downtime info"""
         in_count = self.in_count
         out_count = self.out_count
         pool_count = in_count - out_count
@@ -562,6 +585,11 @@ class RTSPStreamProcessor:
         total_expected_in = in_count + self.missed_in_count
         detection_accuracy = (in_count / total_expected_in * 100) if total_expected_in > 0 else 100
         
+        # Get downtime periods
+        downtime_periods = self.get_downtime_periods()
+        total_downtime_minutes = sum([d['duration_minutes'] for d in downtime_periods])
+        has_downtime = len(downtime_periods) > 0
+        
         return {
             'in_count': max(0, in_count),
             'out_count': max(0, out_count),
@@ -570,7 +598,10 @@ class RTSPStreamProcessor:
             'fps': round(self.fps, 1),
             'missed_in_count': self.missed_in_count,
             'detection_accuracy': round(detection_accuracy, 1),
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'downtime_periods': downtime_periods,
+            'total_downtime_minutes': round(total_downtime_minutes, 1),
+            'has_downtime': has_downtime
         }
     
     def stop(self):

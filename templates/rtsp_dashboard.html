@@ -611,6 +611,13 @@
             Pool count exceeded 90% of maximum capacity
         </div>
         
+        <!-- Downtime Warning Banner -->
+        <div class="alert-banner" id="downtime-banner" style="display: none; background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%); animation: slideDown 0.5s ease-out;">
+            <strong>⚠️ System Downtime Detected!</strong>
+            <span id="downtime-message"></span>
+            <div style="margin-top: 8px; font-size: 12px; opacity: 0.9;" id="downtime-details"></div>
+        </div>
+        
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="brand">
@@ -790,7 +797,7 @@
                               valid_frames: 0, total_frames: 0, corruption_rate: 0, stream_health: 'Unknown' };
         let peakCount = 0;
         let startTime = Date.now();
-        const MAX_CAPACITY = 50;
+        const MAX_CAPACITY = 600;
         
         // Update time displays
         function updateTime() {
@@ -877,6 +884,13 @@
                         missedInEl.style.color = data.missed_in_count > 0 ? '#ffc107' : '#38ef7d';
                     }
                     
+                    // Handle downtime warnings
+                    if (data.has_downtime && data.downtime_periods && data.downtime_periods.length > 0) {
+                        showDowntimeWarning(data.downtime_periods, data.total_downtime_minutes);
+                    } else {
+                        hideDowntimeWarning();
+                    }
+                    
                     // Update peak
                     if (data.pool_count > peakCount) {
                         peakCount = data.pool_count;
@@ -939,6 +953,40 @@
             const alert = document.getElementById('alert-banner');
             alert.classList.add('show');
             setTimeout(() => alert.classList.remove('show'), 5000);
+        }
+        
+        function showDowntimeWarning(downtimePeriods, totalMinutes) {
+            const banner = document.getElementById('downtime-banner');
+            const message = document.getElementById('downtime-message');
+            const details = document.getElementById('downtime-details');
+            
+            // Create message based on number of incidents
+            const count = downtimePeriods.length;
+            const typeText = downtimePeriods[0].type === 'shutdown' ? 'PC Shutdown' : 'Stream Issue';
+            
+            if (count === 1) {
+                message.textContent = `${typeText} detected today (${totalMinutes} min). Counting accuracy may be affected.`;
+            } else {
+                message.textContent = `${count} interruptions detected today (${totalMinutes} min total). Counting accuracy may be affected.`;
+            }
+            
+            // Create detailed list
+            let detailsHtml = 'Downtime periods: ';
+            downtimePeriods.forEach((period, idx) => {
+                const icon = period.type === 'shutdown' ? '🔌' : '📡';
+                detailsHtml += `${icon} ${period.start_display} - ${period.end_display} (${period.duration_minutes} min)`;
+                if (idx < downtimePeriods.length - 1) {
+                    detailsHtml += ' • ';
+                }
+            });
+            details.innerHTML = detailsHtml;
+            
+            banner.style.display = 'block';
+        }
+        
+        function hideDowntimeWarning() {
+            const banner = document.getElementById('downtime-banner');
+            banner.style.display = 'none';
         }
         
         function toggleFullscreen() {

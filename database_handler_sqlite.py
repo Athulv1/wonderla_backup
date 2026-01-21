@@ -192,6 +192,48 @@ class DatabaseHandler:
             }
         return None
     
+    def detect_downtime_gaps(self, gap_threshold_minutes=5):
+        """
+        Detect downtime periods by finding gaps in system_health logs
+        Returns list of downtime periods with start, end, and duration
+        """
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Get all health logs for today, ordered by time
+        self.cursor.execute('''
+            SELECT timestamp 
+            FROM system_health 
+            WHERE date(timestamp) = ?
+            ORDER BY timestamp ASC
+        ''', (today,))
+        
+        logs = self.cursor.fetchall()
+        
+        if len(logs) < 2:
+            return []
+        
+        downtime_periods = []
+        gap_threshold_seconds = gap_threshold_minutes * 60
+        
+        for i in range(1, len(logs)):
+            prev_time = datetime.strptime(logs[i-1][0], '%Y-%m-%d %H:%M:%S')
+            curr_time = datetime.strptime(logs[i][0], '%Y-%m-%d %H:%M:%S')
+            
+            gap_seconds = (curr_time - prev_time).total_seconds()
+            
+            # If gap is larger than threshold, it's a downtime period
+            if gap_seconds > gap_threshold_seconds:
+                downtime_periods.append({
+                    'start': logs[i-1][0],
+                    'end': logs[i][0],
+                    'start_display': prev_time.strftime('%I:%M %p'),
+                    'end_display': curr_time.strftime('%I:%M %p'),
+                    'duration_minutes': round(gap_seconds / 60, 1),
+                    'type': 'shutdown' if gap_seconds > 1800 else 'stream_issue'  # 30 min = shutdown
+                })
+        
+        return downtime_periods
+    
     def close(self):
         """Close database connection"""
         self.conn.close()
