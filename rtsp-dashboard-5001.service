@@ -1,0 +1,17 @@
+[Unit]
+Description=RTSP Head Counter Dashboard (Port 5001 - best.pt model)
+After=network.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/Documents/THINKNEURALAI/wonderla_backup
+Environment="PATH=/home/user/Documents/THINKNEURALAI/wonderla_backup/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/user/Documents/THINKNEURALAI/wonderla_backup/venv/bin/python /home/user/Documents/THINKNEURALAI/wonderla_backup/rtsp_dashboard_5001.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/user/Documents/THINKNEURALAI/wonderla_backup/logs/service_5001.log
+StandardError=append:/home/user/Documents/THINKNEURALAI/wonderla_backup/logs/service_5001_error.log
+
+[Install]
+WantedBy=multi-user.target

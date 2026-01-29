@@ -1,0 +1,18 @@
+[Unit]
+Description=RTSP Head Counter Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/Documents/THINKNEURALAI/wonderla_backup
+Environment="PATH=/home/user/Documents/THINKNEURALAI/wonderla_backup/venv/bin:/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/user/Documents/THINKNEURALAI/wonderla_backup/venv/bin/python rtsp_dashboard.py --port 5000 --db head_counter_5000.db
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

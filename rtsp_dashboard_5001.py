@@ -171,7 +171,7 @@ class RTSPStreamProcessor:
         # Session tracking (simple shutdown detection)
         self.session_id = str(uuid.uuid4())[:8]
         self.session_start = datetime.now()
-        self.heartbeat_file = 'system_heartbeat.txt'
+        self.heartbeat_file = 'system_heartbeat_5001.txt'
         self.uptime_seconds = 0
         self.last_shutdown_time = None
         self.shutdown_duration = 0
@@ -182,7 +182,7 @@ class RTSPStreamProcessor:
         self.last_reset_date = time.strftime('%Y-%m-%d')
         
         # Logging
-        self.log_file = 'logs.html'
+        self.log_file = 'logs_5001.html'
         self.init_log_file()
         
         # Load zones
@@ -224,7 +224,7 @@ class RTSPStreamProcessor:
     
     def get_restart_count_today(self):
         """Get restart count for today from file"""
-        restart_file = 'restart_count.txt'
+        restart_file = 'restart_count_5001.txt'
         try:
             if os.path.exists(restart_file):
                 with open(restart_file, 'r') as f:
@@ -239,7 +239,7 @@ class RTSPStreamProcessor:
     
     def update_restart_count(self):
         """Update restart count for today"""
-        restart_file = 'restart_count.txt'
+        restart_file = 'restart_count_5001.txt'
         try:
             with open(restart_file, 'w') as f:
                 f.write(f"{time.strftime('%Y-%m-%d')}|{self.restart_count_today}")
@@ -790,13 +790,13 @@ def health():
 
 
 def main():
-    # Configuration optimized for top-angle head detection with RTX 3060
+    # Configuration optimized for top-angle head detection with RTX 3060 (PORT 5001)
     rtsp_url = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
     model_path = 'best.pt'  # Custom trained head detection model (YOLOv11l)
     conf_threshold = 0.10  # Low threshold for head-only views
     box_shrink = 0.2  # Less aggressive for small heads
     host = '0.0.0.0'
-    port = 5001
+    port = 5001  # Port 5001 for best.pt model comparison
     
     # Initialize processor
     global processor
@@ -813,10 +813,12 @@ def main():
     
     # Run Flask app
     print(f"\n{'='*60}")
-    print(f"🎯 RTSP Head Counter Dashboard")
+    print(f"🎯 RTSP Head Counter Dashboard (PORT 5001 - best.pt)")
     print(f"{'='*60}")
     print(f"📺 Stream: {rtsp_url}")
+    print(f"🤖 Model: best.pt (Custom YOLOv11l - Head Detection)")
     print(f"🌐 Dashboard: http://{host}:{port}")
+    print(f"📊 Database: head_counter_5001.db")
     print(f"{'='*60}\n")
     
     app.run(host=host, port=port, debug=False, threaded=True)
