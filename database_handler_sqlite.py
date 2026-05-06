@@ -1,30 +1,61 @@
 """
 SQLite Database Handler for Head Counter
-Stores counting events and statistics without requiring a database server
-Supports multiple pools via pool_id
+Thread-safe, supports multiple pools via pool_id
 """
 
 import sqlite3
-import time
+import threading
 from datetime import datetime
-from pathlib import Path
 
 
 class DatabaseHandler:
-    """Handle SQLite database operations for head counting"""
-    
     def __init__(self, db_path='head_counter.db'):
-        """Initialize database connection and create tables"""
         self.db_path = db_path
+        self.lock = threading.Lock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.cursor = self.conn.cursor()
         self._create_tables()
-    
+        self._migrate_tables()
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _execute(self, query, params=None):
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(query, params or ())
+                self.conn.commit()
+                return cur
+            except Exception:
+                cur.close()
+                raise
+
+    def _fetchall(self, query, params=None):
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(query, params or ())
+                return cur.fetchall()
+            finally:
+                cur.close()
+
+    def _fetchone(self, query, params=None):
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(query, params or ())
+                return cur.fetchone()
+            finally:
+                cur.close()
+
+    # ------------------------------------------------------------------ #
+    # Schema                                                               #
+    # ------------------------------------------------------------------ #
+
     def _create_tables(self):
-        """Create necessary database tables"""
-        # Events table
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS events (
+        stmts = [
+            '''CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 event_type TEXT NOT NULL,
@@ -33,12 +64,8 @@ class DatabaseHandler:
                 total_out INTEGER,
                 net_count INTEGER,
                 pool_id TEXT DEFAULT 'pool1'
-            )
-        ''')
-        
-        # Daily summary table
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS daily_summary (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS daily_summary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
                 total_in INTEGER DEFAULT 0,
@@ -48,12 +75,8 @@ class DatabaseHandler:
                 last_updated TEXT,
                 pool_id TEXT DEFAULT 'pool1',
                 UNIQUE(date, pool_id)
-            )
-        ''')
-        
-        # Hourly statistics table
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hourly_stats (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS hourly_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
                 hour INTEGER NOT NULL,
@@ -63,166 +86,210 @@ class DatabaseHandler:
                 last_updated TEXT,
                 pool_id TEXT DEFAULT 'pool1',
                 UNIQUE(date, hour, pool_id)
-            )
-        ''')
-        
-        # System health table
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS system_health (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS system_health (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 fps REAL,
                 current_heads INTEGER,
                 status TEXT,
                 pool_id TEXT DEFAULT 'pool1'
-            )
-        ''')
-        
-        self.conn.commit()
-        self._migrate_tables()
-    
+            )''',
+        ]
+        with self.lock:
+            cur = self.conn.cursor()
+            for stmt in stmts:
+                cur.execute(stmt)
+            self.conn.commit()
+            cur.close()
+
     def _migrate_tables(self):
-        """Migrate existing tables to add missing columns"""
-        migrations = {
-            'daily_summary': ['last_updated', 'pool_id'],
-            'hourly_stats': ['last_updated', 'pool_id'],
+        """
+        Ensure pool_id column exists on all tables, and that daily_summary /
+        hourly_stats have the correct composite UNIQUE constraints.
+        SQLite cannot ALTER a constraint, so we rebuild those tables if needed.
+        """
+        simple_adds = {
+            'events':        ['pool_id'],
             'system_health': ['status', 'pool_id'],
-            'events': ['pool_id'],
         }
-        
-        for table, columns in migrations.items():
+        for table, cols in simple_adds.items():
+            self._add_columns_if_missing(table, cols)
+
+        self._rebuild_if_missing_unique(
+            table='daily_summary',
+            unique_cols=['date', 'pool_id'],
+            ddl='''CREATE TABLE daily_summary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                total_in INTEGER DEFAULT 0,
+                total_out INTEGER DEFAULT 0,
+                net_count INTEGER DEFAULT 0,
+                peak_pool_count INTEGER DEFAULT 0,
+                last_updated TEXT,
+                pool_id TEXT DEFAULT 'pool1',
+                UNIQUE(date, pool_id)
+            )''',
+            copy_cols='date, total_in, total_out, net_count, peak_pool_count, last_updated, pool_id',
+        )
+        self._rebuild_if_missing_unique(
+            table='hourly_stats',
+            unique_cols=['date', 'hour', 'pool_id'],
+            ddl='''CREATE TABLE hourly_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                hour INTEGER NOT NULL,
+                total_in INTEGER DEFAULT 0,
+                total_out INTEGER DEFAULT 0,
+                net_count INTEGER DEFAULT 0,
+                last_updated TEXT,
+                pool_id TEXT DEFAULT 'pool1',
+                UNIQUE(date, hour, pool_id)
+            )''',
+            copy_cols='date, hour, total_in, total_out, net_count, last_updated, pool_id',
+        )
+
+    def _add_columns_if_missing(self, table, cols):
+        with self.lock:
+            cur = self.conn.cursor()
             try:
-                self.cursor.execute(f"PRAGMA table_info({table})")
-                existing_cols = [col[1] for col in self.cursor.fetchall()]
-                
-                for col in columns:
-                    if col not in existing_cols:
+                cur.execute(f'PRAGMA table_info({table})')
+                existing = {row[1] for row in cur.fetchall()}
+                for col in cols:
+                    if col not in existing:
                         default = "'pool1'" if col == 'pool_id' else 'NULL'
-                        print(f"📦 Migrating {table}: adding {col} column...")
-                        self.cursor.execute(f'''
-                            ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT {default}
-                        ''')
+                        cur.execute(f'ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT {default}')
+                        print(f'✓ Migrated {table}: added {col}')
+                self.conn.commit()
+            except Exception as e:
+                print(f'⚠️  Migration {table}: {e}')
+            finally:
+                cur.close()
+
+    def _rebuild_if_missing_unique(self, table, unique_cols, ddl, copy_cols):
+        """Rebuild table if the required UNIQUE constraint is absent."""
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                # Check existing indexes for this table
+                cur.execute(f"PRAGMA index_list({table})")
+                indexes = cur.fetchall()
+                # Also check if any index covers the required columns
+                has_unique = False
+                for idx in indexes:
+                    if idx[2]:  # unique flag
+                        cur.execute(f"PRAGMA index_info({idx[1]})")
+                        idx_cols = [r[2] for r in cur.fetchall()]
+                        if sorted(idx_cols) == sorted(unique_cols):
+                            has_unique = True
+                            break
+
+                # Also accept the old PRIMARY KEY on just 'date' if pool_id not in use
+                if not has_unique:
+                    # Ensure pool_id column exists before rebuilding
+                    cur.execute(f'PRAGMA table_info({table})')
+                    existing = {row[1] for row in cur.fetchall()}
+                    if 'pool_id' not in existing:
+                        cur.execute(f"ALTER TABLE {table} ADD COLUMN pool_id TEXT DEFAULT 'pool1'")
                         self.conn.commit()
-                        print(f"✓ {table}.{col} migration complete")
-            except Exception:
-                pass
-    
+
+                    print(f'📦 Rebuilding {table} to add UNIQUE({", ".join(unique_cols)})...')
+                    cur.execute(f'ALTER TABLE {table} RENAME TO _{table}_old')
+                    cur.execute(ddl)
+                    cur.execute(f'INSERT OR IGNORE INTO {table} ({copy_cols}) SELECT {copy_cols} FROM _{table}_old')
+                    cur.execute(f'DROP TABLE _{table}_old')
+                    self.conn.commit()
+                    print(f'✓ {table} rebuilt successfully')
+            except Exception as e:
+                print(f'⚠️  Rebuild {table}: {e}')
+            finally:
+                cur.close()
+
+    # ------------------------------------------------------------------ #
+    # Public API                                                           #
+    # ------------------------------------------------------------------ #
+
     def log_event(self, event_type, object_id, total_in, total_out, net_count, pool_id='pool1'):
-        """Log a counting event"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.cursor.execute('''
-            INSERT INTO events (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id))
-        self.conn.commit()
-    
+        cur = self._execute(
+            'INSERT INTO events (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id) VALUES (?,?,?,?,?,?,?)',
+            (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id)
+        )
+        cur.close()
+
     def update_daily_summary(self, total_in, total_out, net_count, peak_pool_count, pool_id='pool1'):
-        """Update or insert daily summary"""
         date = datetime.now().strftime('%Y-%m-%d')
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        self.cursor.execute('''
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = self._execute('''
             INSERT INTO daily_summary (date, total_in, total_out, net_count, peak_pool_count, last_updated, pool_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(date, pool_id) DO UPDATE SET
-                total_in = ?,
-                total_out = ?,
-                net_count = ?,
-                peak_pool_count = MAX(peak_pool_count, ?),
-                last_updated = ?
-        ''', (date, total_in, total_out, net_count, peak_pool_count, timestamp, pool_id,
-              total_in, total_out, net_count, peak_pool_count, timestamp))
-        self.conn.commit()
-    
+                total_in=excluded.total_in,
+                total_out=excluded.total_out,
+                net_count=excluded.net_count,
+                peak_pool_count=MAX(peak_pool_count, excluded.peak_pool_count),
+                last_updated=excluded.last_updated
+        ''', (date, total_in, total_out, net_count, peak_pool_count, ts, pool_id))
+        cur.close()
+
     def update_hourly_statistics(self, total_in, total_out, net_count, pool_id='pool1'):
-        """Update or insert hourly statistics"""
         now = datetime.now()
         date = now.strftime('%Y-%m-%d')
-        hour = now.hour
-        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
-        
-        self.cursor.execute('''
+        ts = now.strftime('%Y-%m-%d %H:%M:%S')
+        cur = self._execute('''
             INSERT INTO hourly_stats (date, hour, total_in, total_out, net_count, last_updated, pool_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(date, hour, pool_id) DO UPDATE SET
-                total_in = ?,
-                total_out = ?,
-                net_count = ?,
-                last_updated = ?
-        ''', (date, hour, total_in, total_out, net_count, timestamp, pool_id,
-              total_in, total_out, net_count, timestamp))
-        self.conn.commit()
-    
+                total_in=excluded.total_in,
+                total_out=excluded.total_out,
+                net_count=excluded.net_count,
+                last_updated=excluded.last_updated
+        ''', (date, now.hour, total_in, total_out, net_count, ts, pool_id))
+        cur.close()
+
     def log_system_health(self, fps, current_heads, status, pool_id='pool1'):
-        """Log system health metrics"""
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.cursor.execute('''
-            INSERT INTO system_health (timestamp, fps, current_heads, status, pool_id)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (timestamp, fps, current_heads, status, pool_id))
-        self.conn.commit()
-    
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = self._execute(
+            'INSERT INTO system_health (timestamp, fps, current_heads, status, pool_id) VALUES (?,?,?,?,?)',
+            (ts, fps, current_heads, status, pool_id)
+        )
+        cur.close()
+
     def get_today_summary(self, pool_id='pool1'):
-        """Get today's summary statistics for a specific pool"""
         date = datetime.now().strftime('%Y-%m-%d')
-        self.cursor.execute('''
-            SELECT total_in, total_out, net_count, peak_pool_count
-            FROM daily_summary
-            WHERE date = ? AND pool_id = ?
-        ''', (date, pool_id))
-        
-        row = self.cursor.fetchone()
+        row = self._fetchone(
+            'SELECT total_in, total_out, net_count, peak_pool_count FROM daily_summary WHERE date=? AND pool_id=?',
+            (date, pool_id)
+        )
         if row:
-            return {
-                'total_in': row[0],
-                'total_out': row[1],
-                'net_count': row[2],
-                'peak_pool_count': row[3]
-            }
+            return {'total_in': row[0], 'total_out': row[1], 'net_count': row[2], 'peak_pool_count': row[3]}
         return None
-    
+
     def detect_downtime_gaps(self, gap_threshold_minutes=5, pool_id='pool1'):
-        """
-        Detect downtime periods by finding gaps in system_health logs
-        Returns list of downtime periods with start, end, and duration
-        """
         today = datetime.now().strftime('%Y-%m-%d')
-        
-        # Get all health logs for today, ordered by time
-        self.cursor.execute('''
-            SELECT timestamp 
-            FROM system_health 
-            WHERE date(timestamp) = ? AND pool_id = ?
-            ORDER BY timestamp ASC
-        ''', (today, pool_id))
-        
-        logs = self.cursor.fetchall()
-        
-        if len(logs) < 2:
+        rows = self._fetchall(
+            "SELECT timestamp FROM system_health WHERE date(timestamp)=? AND pool_id=? ORDER BY timestamp ASC",
+            (today, pool_id)
+        )
+        if len(rows) < 2:
             return []
-        
-        downtime_periods = []
-        gap_threshold_seconds = gap_threshold_minutes * 60
-        
-        for i in range(1, len(logs)):
-            prev_time = datetime.strptime(logs[i-1][0], '%Y-%m-%d %H:%M:%S')
-            curr_time = datetime.strptime(logs[i][0], '%Y-%m-%d %H:%M:%S')
-            
-            gap_seconds = (curr_time - prev_time).total_seconds()
-            
-            # If gap is larger than threshold, it's a downtime period
-            if gap_seconds > gap_threshold_seconds:
-                downtime_periods.append({
-                    'start': logs[i-1][0],
-                    'end': logs[i][0],
-                    'start_display': prev_time.strftime('%I:%M %p'),
-                    'end_display': curr_time.strftime('%I:%M %p'),
-                    'duration_minutes': round(gap_seconds / 60, 1),
-                    'type': 'shutdown' if gap_seconds > 1800 else 'stream_issue'  # 30 min = shutdown
+        periods = []
+        threshold = gap_threshold_minutes * 60
+        for i in range(1, len(rows)):
+            t0 = datetime.strptime(rows[i-1][0], '%Y-%m-%d %H:%M:%S')
+            t1 = datetime.strptime(rows[i][0], '%Y-%m-%d %H:%M:%S')
+            gap = (t1 - t0).total_seconds()
+            if gap > threshold:
+                periods.append({
+                    'start': rows[i-1][0],
+                    'end': rows[i][0],
+                    'start_display': t0.strftime('%I:%M %p'),
+                    'end_display': t1.strftime('%I:%M %p'),
+                    'duration_minutes': round(gap / 60, 1),
+                    'type': 'shutdown' if gap > 1800 else 'stream_issue',
                 })
-        
-        return downtime_periods
-    
+        return periods
+
     def close(self):
-        """Close database connection"""
-        self.conn.close()
+        with self.lock:
+            self.conn.close()

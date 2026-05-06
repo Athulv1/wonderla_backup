@@ -82,6 +82,12 @@
   .metric-value{font-size:1.1rem;font-weight:800;color:var(--text-dark);transition:transform .2s,color .3s}
   .metric-value.warn{color:var(--orange-warn)}
 
+  /* video feed */
+  .video-feed-box{border-radius:var(--radius-sm);overflow:hidden;background:#000;position:relative;width:100%;aspect-ratio:16/9}
+  .video-feed-box img{width:100%;height:100%;object-fit:contain;display:block}
+  .video-label{position:absolute;top:8px;left:10px;background:rgba(0,0,0,.55);color:#fff;font-size:.65rem;font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:.04em}
+  .video-offline{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:.8rem;font-weight:600}
+
   /* footer */
   footer{text-align:center;padding:14px;position:relative;z-index:1;font-size:.8rem;color:var(--text-grey)}
   .footer-inner{display:flex;align-items:center;justify-content:center;gap:10px}
@@ -187,6 +193,10 @@
           <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p1-occ">0%</div></div>
           <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p1-peak">0</div></div>
         </div>
+        <div class="video-feed-box">
+          <img src="/video_feed/pool1" alt="Pool 1 Live Feed">
+          <div class="video-label">POOL 01 · LIVE</div>
+        </div>
       </div>
 
       <!-- POOL 02 -->
@@ -229,6 +239,10 @@
           <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p2-occ">0%</div></div>
           <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p2-peak">0</div></div>
         </div>
+        <div class="video-feed-box">
+          <img src="/video_feed/pool2" alt="Pool 2 Live Feed">
+          <div class="video-label">POOL 02 · LIVE</div>
+        </div>
       </div>
     </div>
   </div>
@@ -236,8 +250,8 @@
   <footer>
     <div class="footer-inner">
       <span>Powered by</span>
-      <img src="{{ url_for('static', filename='thinkneuralai_logo.jpg') }}" alt="Thinkneuralai">
-      <strong>Thinkneuralai</strong>
+      <img src="{{ url_for('static', filename='thinkneuralai_logo.jpg') }}" alt="ThinkneuralAI">
+      <strong>ThinkneuralAI</strong>
     </div>
   </footer>
 </div>

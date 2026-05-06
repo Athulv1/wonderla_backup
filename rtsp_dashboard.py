@@ -113,9 +113,10 @@ class CentroidTracker:
 class RTSPStreamProcessor:
     """Process RTSP stream with head counting"""
     
-    def __init__(self, rtsp_url, pool_id='pool1', model_path='yolo11x.pt', conf_threshold=0.10, box_shrink=0.2):
+    def __init__(self, rtsp_url, pool_id='pool1', model_path='yolo11x.pt', conf_threshold=0.10, box_shrink=0.2, capacity=500):
         self.rtsp_url = rtsp_url
         self.pool_id = pool_id
+        self.capacity = capacity
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
@@ -175,12 +176,15 @@ class RTSPStreamProcessor:
         config_file = f'head_counter_config_{self.pool_id}.json'
         if not os.path.exists(config_file):
             config_file = 'head_counter_config.json'
-        
+
+        self.invert_direction = False
+
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
                 config = json.load(f)
                 config_type = config.get('type', 'zones')
-                
+                self.invert_direction = config.get('invert_direction', False)
+
                 if config_type == 'two_lines':
                     in_line = config.get('in_line_y', 500)
                     out_line = config.get('out_line_y', 300)
@@ -189,7 +193,7 @@ class RTSPStreamProcessor:
                 else:
                     self.upper_zone = config.get('upper_zone', [0, 0, 640, 120])
                     self.lower_zone = config.get('lower_zone', [0, 120, 640, 288])
-                    self.partition_y = self.upper_zone[3]
+                    self.partition_y = config.get('partition_y', self.upper_zone[3])
                     self.config_type = 'zones'
         else:
             self.partition_y = 360
@@ -331,23 +335,27 @@ class RTSPStreamProcessor:
                 cx, cy = centroid
                 current_zone = 'upper' if cy < self.partition_y else 'lower'
                 previous_zone = self.object_zones.get(object_id)
-                
+
                 if previous_zone is not None and previous_zone != current_zone:
                     if object_id not in self.counted_ids:
-                        if previous_zone == 'upper' and current_zone == 'lower':
+                        upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
+                        lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
+                        is_in = (lower_to_upper if self.invert_direction else upper_to_lower)
+                        is_out = (upper_to_lower if self.invert_direction else lower_to_upper)
+                        if is_in:
                             self.in_count += 1
                             self.counted_ids.add(object_id)
                             self.log_event('IN', object_id)
-                        elif previous_zone == 'lower' and current_zone == 'upper':
+                        elif is_out:
                             self.out_count += 1
                             self.counted_ids.add(object_id)
                             self.log_event('OUT', object_id)
-                
+
                 self.object_zones[object_id] = current_zone
                 cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
                 cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            
+
             tracked_ids = set(objects.keys())
             disappeared_ids = set(self.object_zones.keys()) - tracked_ids
             for obj_id in disappeared_ids:
@@ -530,7 +538,8 @@ class RTSPStreamProcessor:
             'timestamp': time.time(),
             'downtime_periods': downtime_periods,
             'total_downtime_minutes': round(total_downtime_minutes, 1),
-            'has_downtime': len(downtime_periods) > 0
+            'has_downtime': len(downtime_periods) > 0,
+            'capacity': self.capacity
         }
     
     def stop(self):
@@ -552,8 +561,30 @@ processors = {}
 
 @app.route('/')
 def index():
-    """Main dashboard page"""
     return render_template('rtsp_dashboard.html')
+
+
+def generate_frames(pool_id):
+    while True:
+        processor = processors.get(pool_id)
+        if processor is None:
+            time.sleep(0.1)
+            continue
+        frame = processor.get_frame()
+        if frame is None:
+            time.sleep(0.1)
+            continue
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if not ret:
+            continue
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+
+@app.route('/video_feed/<pool_id>')
+def video_feed(pool_id):
+    if pool_id not in processors:
+        return 'Pool not found', 404
+    return Response(generate_frames(pool_id), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/stats')
@@ -603,8 +634,7 @@ def main():
     # Configuration for both pools
     # Pool 1 RTSP URL
     rtsp_url_1 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
-    # Pool 2 RTSP URL - UPDATE THIS with your second RTSP URL
-    rtsp_url_2 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=2subtype=0"
+    rtsp_url_2 = "rtsp://admin:Ele%23%23%23313@10.196.211.59:554/"
     
     model_path = 'yolo11x.pt'
     conf_threshold = 0.10
@@ -622,9 +652,10 @@ def main():
         pool_id='pool1',
         model_path=model_path,
         conf_threshold=conf_threshold,
-        box_shrink=box_shrink
+        box_shrink=box_shrink,
+        capacity=800
     )
-    
+
     # Initialize Pool 2
     print(f"🏊 Initializing Pool 02...")
     processors['pool2'] = RTSPStreamProcessor(
@@ -632,7 +663,8 @@ def main():
         pool_id='pool2',
         model_path=model_path,
         conf_threshold=conf_threshold,
-        box_shrink=box_shrink
+        box_shrink=box_shrink,
+        capacity=400
     )
     
     # Start both processors
