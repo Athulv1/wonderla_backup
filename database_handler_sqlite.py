@@ -290,6 +290,66 @@ class DatabaseHandler:
                 })
         return periods
 
+    def get_daily_peak_report(self, date_str):
+        """Return entered/exited/net/peak per pool for the given date."""
+        rows = self._fetchall(
+            '''SELECT pool_id, total_in, total_out, net_count, peak_pool_count
+               FROM daily_summary
+               WHERE date=?
+               ORDER BY pool_id''',
+            (date_str,)
+        )
+        return [
+            {
+                'date': date_str,
+                'pool_id': row[0],
+                'total_entered': int(row[1] or 0),
+                'total_exited': int(row[2] or 0),
+                'net_count': int(row[3] or 0),
+                'peak_pool_count': int(row[4] or 0),
+            }
+            for row in rows
+        ]
+
+    def get_daily_guest_entry_report(self, date_str):
+        """Return entered count per pool for the given date."""
+        rows = self._fetchall(
+            '''SELECT pool_id, total_in
+               FROM daily_summary
+               WHERE date=?
+               ORDER BY pool_id''',
+            (date_str,)
+        )
+        return [
+            {
+                'date': date_str,
+                'pool_id': row[0],
+                'total_entered': int(row[1] or 0),
+            }
+            for row in rows
+        ]
+
+    def get_hourly_guest_usage_report(self, date_str):
+        """Return hourly entered/exited/net per pool for the given date."""
+        rows = self._fetchall(
+            '''SELECT hour, pool_id, total_in, total_out, net_count
+               FROM hourly_stats
+               WHERE date=?
+               ORDER BY hour ASC, pool_id ASC''',
+            (date_str,)
+        )
+        return [
+            {
+                'date': date_str,
+                'hour': int(row[0]),
+                'pool_id': row[1],
+                'total_entered': int(row[2] or 0),
+                'total_exited': int(row[3] or 0),
+                'net_count': int(row[4] or 0),
+            }
+            for row in rows
+        ]
+
     def close(self):
         with self.lock:
             self.conn.close()

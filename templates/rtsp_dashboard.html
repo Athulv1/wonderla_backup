@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wonderla – Live Pool Monitoring</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -107,6 +108,22 @@
 
   /* ── Content grid ────────────────────────────────────────── */
   .content{flex:1;display:grid;grid-template-columns:var(--content-cols);gap:var(--main-gap)}
+  .view{flex:1;min-width:0}
+  .hidden{display:none!important}
+
+  .analytics-grid{display:grid;grid-template-columns:1fr;gap:var(--main-gap)}
+  .report-card{background:var(--white);border-radius:var(--radius);padding:var(--card-pad);box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px}
+  .report-title{font-size:clamp(.95rem,1.2vw,1.2rem);font-weight:700;color:var(--text-dark)}
+  .report-subtitle{font-size:clamp(.65rem,.9vw,.82rem);color:var(--text-grey)}
+  .report-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .report-actions input{padding:8px 10px;border:1px solid #d5def4;border-radius:8px;background:#fff;color:var(--text-dark)}
+  .report-btn{border:none;border-radius:8px;padding:8px 12px;font-size:.8rem;font-weight:700;cursor:pointer}
+  .btn-primary{background:var(--blue);color:#fff}
+  .btn-secondary{background:var(--yellow);color:#1a1a2e}
+  .report-meta{font-size:.75rem;color:var(--text-grey)}
+  .chart-box{height:300px;background:#f8faff;border:1px solid #e4ebff;border-radius:10px;padding:8px;position:relative}
+  .chart-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#8892b0;font-size:13px;font-family:'Poppins',sans-serif}
+  .chart-empty svg{opacity:.35}
 
   /* ── Pool card ───────────────────────────────────────────── */
   .pool-card{background:var(--white);border-radius:var(--radius);padding:var(--card-pad);box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:var(--card-gap)}
@@ -208,24 +225,25 @@
   <div class="main">
     <!-- sidebar -->
     <nav class="sidebar">
-      <div class="nav-item active">
+      <div class="nav-item active" data-view="dashboard-view">
         <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="2" fill="white"/><rect x="13" y="2" width="9" height="9" rx="2" fill="white"/><rect x="2" y="13" width="9" height="9" rx="2" fill="white"/><rect x="13" y="13" width="9" height="9" rx="2" fill="white"/></svg>
         <span class="nav-label">Dashboard</span>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-view="analytics-view">
         <svg viewBox="0 0 24 24" fill="none"><path d="M3 18l5-7 4 4 4-6 5 4" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="21" x2="21" y2="21" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
         <span class="nav-label">Analytics</span>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-view="dashboard-view">
         <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#6b7280" stroke-width="2"/><path d="M12 7v5l3 3" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
         <span class="nav-label">History</span>
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-view="dashboard-view">
         <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="#6b7280" stroke-width="2"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
         <span class="nav-label">Settings</span>
       </div>
     </nav>
 
+    <div class="view" id="dashboard-view">
     <div class="content">
       <!-- POOL 01 -->
       <div class="pool-card">
@@ -311,6 +329,65 @@
         </div>
       </div>
     </div>
+    </div>
+
+    <div class="view hidden" id="analytics-view">
+      <div class="analytics-grid">
+        <div class="report-card">
+          <div class="report-title">Daily Peak Report</div>
+          <div class="report-subtitle">Daily entered / exited / peak count per pool.</div>
+          <div class="report-actions">
+            <input type="date" id="date-daily-peak">
+            <button class="report-btn btn-primary" onclick="generateReport('daily_peak')">Generate</button>
+            <button class="report-btn btn-secondary" onclick="downloadReport('daily_peak')">Download Excel</button>
+            <span class="report-meta" id="meta-daily-peak">No file generated yet.</span>
+          </div>
+          <div class="chart-box">
+            <canvas id="chart-daily-peak"></canvas>
+            <div class="chart-empty" id="empty-daily-peak">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3c4b6f" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 4 4-8"/></svg>
+              <span>No data for this date</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="report-card">
+          <div class="report-title">Daily Guest Entry</div>
+          <div class="report-subtitle">Total guests entered per pool for the selected date.</div>
+          <div class="report-actions">
+            <input type="date" id="date-daily-guest-entry">
+            <button class="report-btn btn-primary" onclick="generateReport('daily_guest_entry')">Generate</button>
+            <button class="report-btn btn-secondary" onclick="downloadReport('daily_guest_entry')">Download Excel</button>
+            <span class="report-meta" id="meta-daily-guest-entry">No file generated yet.</span>
+          </div>
+          <div class="chart-box">
+            <canvas id="chart-daily-guest-entry"></canvas>
+            <div class="chart-empty" id="empty-daily-guest-entry">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3c4b6f" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 4 4-8"/></svg>
+              <span>No data for this date</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="report-card">
+          <div class="report-title">Hourly Guest Usage</div>
+          <div class="report-subtitle">Hourly entered / exited per pool. Auto-generated every hour.</div>
+          <div class="report-actions">
+            <input type="date" id="date-hourly-guest-usage">
+            <button class="report-btn btn-primary" onclick="generateReport('hourly_guest_usage')">Generate</button>
+            <button class="report-btn btn-secondary" onclick="downloadReport('hourly_guest_usage')">Download Excel</button>
+            <span class="report-meta" id="meta-hourly-guest-usage">No file generated yet.</span>
+          </div>
+          <div class="chart-box">
+            <canvas id="chart-hourly-guest-usage"></canvas>
+            <div class="chart-empty" id="empty-hourly-guest-usage">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3c4b6f" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 4 4-8"/></svg>
+              <span>No data for this date</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -324,6 +401,12 @@
 
 <script>
 const MAX_CAPACITY = 600;
+const reportCharts = {};
+const reportTypes = ['daily_peak', 'daily_guest_entry', 'hourly_guest_usage'];
+
+function toReportKey(reportType) {
+  return reportType.replaceAll('_', '-');
+}
 
 function updateClock() {
   const now = new Date();
@@ -373,6 +456,158 @@ function updateStats() {
     .catch(err => console.error('Stats error:', err));
 }
 
+function renderReportChart(reportType, chartData) {
+  const key = toReportKey(reportType);
+  const canvas = document.getElementById(`chart-${key}`);
+  const emptyEl = document.getElementById(`empty-${key}`);
+  if (!canvas) return;
+
+  const labels = chartData.labels || [];
+  const rawDatasets = chartData.datasets || [];
+
+  // Show/hide empty state
+  if (labels.length === 0) {
+    canvas.style.display = 'none';
+    if (emptyEl) emptyEl.style.display = 'flex';
+    if (reportCharts[reportType]) { reportCharts[reportType].destroy(); delete reportCharts[reportType]; }
+    return;
+  }
+  canvas.style.display = '';
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const palette = ['#1a3ab5', '#f5a623', '#22a06b', '#f5c518', '#9b59b6', '#e05a24'];
+  const datasets = rawDatasets.map((ds, idx) => ({
+    label: ds.label,
+    data: ds.data,
+    borderColor: ds.color || palette[idx % palette.length],
+    backgroundColor: (ds.color || palette[idx % palette.length]) + '28',
+    borderWidth: 2.5,
+    pointRadius: labels.length > 12 ? 3 : 5,
+    pointHoverRadius: 7,
+    pointBackgroundColor: ds.color || palette[idx % palette.length],
+    tension: 0.35,
+    fill: false,
+  }));
+
+  if (reportCharts[reportType]) {
+    reportCharts[reportType].destroy();
+  }
+
+  reportCharts[reportType] = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { usePointStyle: true, pointStyle: 'circle', padding: 18, font: { size: 12, family: 'Poppins' } },
+        },
+        tooltip: {
+          backgroundColor: '#1a3ab5',
+          titleColor: '#fff',
+          bodyColor: '#c8d9ff',
+          padding: 12,
+          cornerRadius: 8,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#3c4b6f', maxRotation: 35, font: { size: 11, family: 'Poppins' } },
+          grid: { color: '#e6ecff', lineWidth: 1 },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#3c4b6f', font: { size: 11, family: 'Poppins' }, precision: 0 },
+          grid: { color: '#e6ecff', lineWidth: 1 },
+        },
+      },
+    },
+  });
+}
+
+function renderReportMeta(reportType, payload) {
+  const key = toReportKey(reportType);
+  const meta = document.getElementById(`meta-${key}`);
+  if (!meta) return;
+  const rowCount = (payload.rows || []).length;
+  meta.textContent = `${payload.filename} | Rows: ${rowCount}`;
+}
+
+function fetchReport(reportType) {
+  const key = toReportKey(reportType);
+  const date = document.getElementById(`date-${key}`).value;
+  fetch(`/api/reports/${reportType}?date=${encodeURIComponent(date)}`)
+    .then(resp => resp.json())
+    .then(payload => {
+      if (!payload.success) throw new Error(payload.message || 'Failed to load report');
+      renderReportMeta(reportType, payload);
+      renderReportChart(reportType, payload.chart || { labels: [], datasets: [] });
+    })
+    .catch(err => {
+      console.error('Report fetch failed:', err);
+      const meta = document.getElementById(`meta-${key}`);
+      if (meta) meta.textContent = `Error: ${err.message}`;
+    });
+}
+
+function generateReport(reportType) {
+  const key = toReportKey(reportType);
+  const date = document.getElementById(`date-${key}`).value;
+
+  fetch(`/api/reports/generate/${reportType}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, send_email: false }),
+  })
+    .then(resp => resp.json())
+    .then(payload => {
+      if (!payload.success) throw new Error(payload.message || 'Generation failed');
+      renderReportMeta(reportType, payload);
+      renderReportChart(reportType, payload.chart || { labels: [], datasets: [] });
+    })
+    .catch(err => {
+      console.error('Report generation failed:', err);
+      const meta = document.getElementById(`meta-${key}`);
+      if (meta) meta.textContent = `Error: ${err.message}`;
+    });
+}
+
+function downloadReport(reportType) {
+  window.open(`/api/reports/download/${reportType}`, '_blank');
+}
+
+function initAnalyticsDateInputs() {
+  const today = new Date().toISOString().split('T')[0];
+  reportTypes.forEach(reportType => {
+    const input = document.getElementById(`date-${toReportKey(reportType)}`);
+    if (input) input.value = today;
+  });
+}
+
+function activateView(viewId) {
+  document.querySelectorAll('.view').forEach(view => {
+    view.classList.toggle('hidden', view.id !== viewId);
+  });
+}
+
+function initNavSwitching() {
+  const navItems = document.querySelectorAll('.nav-item');
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      navItems.forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      const viewId = item.dataset.view || 'dashboard-view';
+      activateView(viewId);
+      if (viewId === 'analytics-view') {
+        reportTypes.forEach(fetchReport);
+      }
+    });
+  });
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') location.reload();
   if (e.key === 'f' || e.key === 'F') {
@@ -385,6 +620,8 @@ updateClock();
 setInterval(updateClock, 1000);
 updateStats();
 setInterval(updateStats, 500);
+initAnalyticsDateInputs();
+initNavSwitching();
 </script>
 </body>
 </html>
