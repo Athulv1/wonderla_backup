@@ -1,1054 +1,310 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pool Head Counter Dashboard - Wonderla</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        
-        body { 
-            font-family: 'Inter', sans-serif; 
-            background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #1a1a2e 100%);
-            background-size: 400% 400%;
-            animation: gradientShift 15s ease infinite;
-            color: #ddd; 
-            position: relative;
-            min-height: 100vh;
-        }
-        
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: 
-                radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 40% 20%, rgba(255, 0, 128, 0.08) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: 0;
-        }
-        
-        @keyframes gradientShift {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        
-        .container { 
-            display: grid; 
-            grid-template-columns: 260px 1fr; 
-            gap: 24px; 
-            min-height: 100vh; 
-            padding: 18px; 
-            position: relative; 
-            z-index: 1; 
-        }
-        
-        /* Sidebar */
-        .sidebar { 
-            background: linear-gradient(180deg, rgba(18, 19, 20, 0.95) 0%, rgba(23, 24, 26, 0.95) 100%);
-            backdrop-filter: blur(10px);
-            border-radius: 12px; 
-            padding: 18px; 
-            display: flex; 
-            flex-direction: column; 
-            gap: 18px; 
-            height: fit-content; 
-            position: sticky; 
-            top: 18px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-            animation: slideInLeft 0.5s ease-out;
-        }
-        
-        .brand { 
-            display: flex; 
-            align-items: center; 
-            flex-direction: column;
-            gap: 12px; 
-            margin-bottom: 10px;
-            padding: 15px;
-            background: rgba(59, 130, 246, 0.1);
-            border-radius: 10px;
-            border: 1px solid rgba(59, 130, 246, 0.2);
-        }
-        
-        .brand-icon {
-            font-size: 42px;
-            animation: float 3s ease-in-out infinite;
-        }
-        
-        .brand h1 { 
-            font-size: 20px; 
-            color: #fff; 
-            text-align: center;
-        }
-        
-        .brand .subtitle { 
-            font-size: 12px; 
-            color: #9aa0a6; 
-            text-align: center;
-        }
-        
-        .stats-mini {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-top: 10px;
-        }
-        
-        .stat-mini {
-            background: rgba(255, 255, 255, 0.03);
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            transition: all 0.3s ease;
-        }
-        
-        .stat-mini:hover {
-            background: rgba(255, 255, 255, 0.05);
-            border-color: rgba(59, 130, 246, 0.3);
-        }
-        
-        .stat-mini-label {
-            font-size: 11px;
-            color: #9aa0a6;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
-        }
-        
-        .stat-mini-value {
-            font-size: 24px;
-            font-weight: 700;
-            color: #fff;
-        }
-        
-        .stat-mini.in .stat-mini-value { color: #38ef7d; }
-        .stat-mini.out .stat-mini-value { color: #ff6a00; }
-        .stat-mini.pool .stat-mini-value { color: #667eea; }
-        
-        .quick-actions {
-            margin-top: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        
-        .quick-action-title {
-            font-size: 12px;
-            color: #8a8f96;
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .action-btn {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(37, 99, 235, 0.1));
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            color: #fff;
-            padding: 10px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            text-align: center;
-        }
-        
-        .action-btn:hover {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.2));
-            border-color: rgba(59, 130, 246, 0.5);
-            transform: translateY(-2px);
-        }
-        
-        .action-btn.danger {
-            background: linear-gradient(135deg, rgba(224, 75, 75, 0.1), rgba(220, 38, 38, 0.1));
-            border-color: rgba(224, 75, 75, 0.3);
-        }
-        
-        .action-btn.danger:hover {
-            background: linear-gradient(135deg, rgba(224, 75, 75, 0.2), rgba(220, 38, 38, 0.2));
-            border-color: rgba(224, 75, 75, 0.5);
-        }
-        
-        .system-info {
-            margin-top: auto;
-            padding-top: 15px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .info-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            font-size: 12px;
-        }
-        
-        .info-label { color: #9aa0a6; }
-        .info-value { 
-            color: #fff; 
-            font-weight: 600;
-            font-family: monospace;
-        }
-        
-        /* Main Content */
-        .main { 
-            overflow: auto; 
-            animation: fadeIn 0.6s ease-out;
-        }
-        
-        .topbar { 
-            background: linear-gradient(135deg, rgba(23, 24, 26, 0.95) 0%, rgba(31, 33, 37, 0.95) 100%);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-            padding: 20px 24px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            animation: slideDown 0.6s ease-out;
-        }
-        
-        .topbar-content {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        
-        .title h2 { 
-            font-size: 32px; 
-            color: #f1f3f5; 
-            margin-bottom: 8px;
-        }
-        
-        .sub { 
-            color: #9aa0a6; 
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #38ef7d;
-            animation: pulse 2s ease-in-out infinite;
-            box-shadow: 0 0 10px rgba(56, 239, 125, 0.7);
-        }
-        
-        .time-display {
-            font-size: 14px;
-            color: #9aa0a6;
-            font-family: monospace;
-            background: rgba(255, 255, 255, 0.03);
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        /* Metrics Grid */
-        .metrics { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
-            gap: 20px; 
-            padding: 10px 6px;
-            margin-bottom: 24px;
-        }
-        
-        .metric-card { 
-            background: linear-gradient(135deg, rgba(23, 24, 26, 0.95) 0%, rgba(31, 33, 37, 0.95) 100%);
-            backdrop-filter: blur(10px);
-            padding: 25px; 
-            border-radius: 12px; 
-            transition: all 0.3s ease; 
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .metric-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: var(--accent-gradient);
-        }
-        
-        .metric-card.in-card { --accent-gradient: linear-gradient(90deg, #11998e, #38ef7d); }
-        .metric-card.out-card { --accent-gradient: linear-gradient(90deg, #ee0979, #ff6a00); }
-        .metric-card.pool-card { 
-            --accent-gradient: linear-gradient(90deg, #667eea, #764ba2); 
-            grid-column: 1 / -1;
-        }
-        
-        .metric-card:hover { 
-            transform: translateY(-4px); 
-            box-shadow: 0 12px 32px rgba(59, 130, 246, 0.2), 0 0 40px rgba(59, 130, 246, 0.1);
-            border-color: rgba(59, 130, 246, 0.3);
-        }
-        
-        .metric-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 20px;
-        }
-        
-        .metric-icon {
-            font-size: 32px;
-            opacity: 0.9;
-        }
-        
-        .metric-trend {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 6px;
-            background: rgba(56, 239, 125, 0.15);
-            color: #38ef7d;
-            border: 1px solid rgba(56, 239, 125, 0.3);
-        }
-        
-        .metric-trend.down {
-            background: rgba(255, 106, 0, 0.15);
-            color: #ff6a00;
-            border-color: rgba(255, 106, 0, 0.3);
-        }
-        
-        .metric-label {
-            font-size: 14px;
-            color: #9aa0a6;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-        
-        .metric-value {
-            font-size: 48px;
-            font-weight: 700;
-            color: #fff;
-            line-height: 1;
-            margin-bottom: 15px;
-            font-feature-settings: 'tnum';
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        .comparison-bar {
-            height: 6px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 12px;
-        }
-        
-        .comparison-fill {
-            height: 100%;
-            background: var(--accent-gradient);
-            transition: width 0.5s ease;
-            border-radius: 3px;
-        }
-        
-        /* Pool Count Special Card */
-        .pool-banner {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 40px;
-            border-radius: 16px;
-            position: relative;
-            overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .pool-banner::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
-            animation: pulseGlow 4s ease-in-out infinite;
-        }
-        
-        @keyframes pulseGlow {
-            0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.5; }
-            50% { transform: scale(1.1) rotate(180deg); opacity: 0.8; }
-        }
-        
-        .pool-content {
-            position: relative;
-            z-index: 1;
-        }
-        
-        .pool-label {
-            font-size: 16px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-bottom: 15px;
-            opacity: 0.9;
-            color: #fff;
-        }
-        
-        .pool-value {
-            font-size: 72px;
-            font-weight: 700;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
-            animation: countPulse 2s ease-in-out infinite;
-            color: #fff;
-        }
-        
-        @keyframes countPulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.03); }
-        }
-        
-        .pool-subtext {
-            font-size: 16px;
-            opacity: 0.9;
-            margin-bottom: 25px;
-            color: #fff;
-        }
-        
-        .pool-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-        }
-        
-        .pool-stat {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            transition: all 0.3s ease;
-        }
-        
-        .pool-stat:hover {
-            background: rgba(255, 255, 255, 0.2);
-            transform: translateY(-2px);
-        }
-        
-        .pool-stat-label {
-            font-size: 12px;
-            opacity: 0.9;
-            margin-bottom: 8px;
-            color: #fff;
-        }
-        
-        .pool-stat-value {
-            font-size: 28px;
-            font-weight: 700;
-            color: #fff;
-        }
-        
-        /* Video Section */
-        .video-section {
-            background: linear-gradient(135deg, rgba(23, 24, 26, 0.95) 0%, rgba(31, 33, 37, 0.95) 100%);
-            backdrop-filter: blur(10px);
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-            overflow: hidden;
-            margin: 0 6px;
-        }
-        
-        .video-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 20px 24px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .video-title {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 18px;
-            font-weight: 600;
-            color: #f1f3f5;
-        }
-        
-        .fps-badge {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 13px;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-        }
-        
-        .video-wrapper {
-            position: relative;
-            width: 100%;
-            background: #000;
-            min-height: 480px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .video-wrapper img {
-            max-width: 100%;
-            max-height: 600px;
-            height: auto;
-            display: block;
-            margin: 0 auto;
-            object-fit: contain;
-            animation: fadeIn 0.5s ease-in;
-        }
-        
-        /* Alert Banner */
-        .alert-banner {
-            position: fixed;
-            top: 20px;
-            right: 280px;
-            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
-            color: white;
-            padding: 16px 24px;
-            border-radius: 12px;
-            box-shadow: 0 8px 24px rgba(255, 107, 107, 0.5);
-            display: none;
-            z-index: 1000;
-            animation: slideInRight 0.5s ease-out;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            max-width: 400px;
-        }
-        
-        .alert-banner.show { display: block; }
-        
-        .alert-banner strong {
-            display: block;
-            margin-bottom: 5px;
-            font-size: 15px;
-        }
-        
-        /* Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        @keyframes slideInLeft {
-            from { opacity: 0; transform: translateX(-30px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        
-        @keyframes slideInRight {
-            from { opacity: 0; transform: translateX(30px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-        }
-        
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                position: relative;
-                top: 0;
-            }
-            
-            .alert-banner {
-                right: 20px;
-                left: 20px;
-            }
-        }
-        
-        @media (max-width: 768px) {
-            .metrics {
-                grid-template-columns: 1fr;
-            }
-            
-            .pool-value {
-                font-size: 56px;
-            }
-            
-            .metric-value {
-                font-size: 36px;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wonderla – Live Pool Monitoring</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--blue:#1a3ab5;--blue-light:#e8edf9;--blue-mid:#2952cc;--yellow:#f5c518;--yellow-light:#fdf3c8;--orange-warn:#f5a623;--bg:#f0f4ff;--white:#fff;--text-dark:#1a1a2e;--text-grey:#6b7280;--card-shadow:0 2px 12px rgba(26,58,181,.08);--radius:16px;--radius-sm:10px}
+  body{font-family:'Poppins',sans-serif;background:var(--bg);min-height:100vh;display:flex;flex-direction:column}
+
+  /* decorative corners */
+  body::before,body::after{content:'';position:fixed;z-index:0;pointer-events:none}
+  body::before{top:0;left:0;width:220px;height:220px;background:var(--yellow);clip-path:polygon(0 0,100% 0,0 100%);opacity:.55}
+  body::after{bottom:0;right:0;width:260px;height:140px;background:#c8d9ff;clip-path:ellipse(100% 100% at 100% 100%);opacity:.7}
+
+  /* wave bottom */
+  .wave-bottom{position:fixed;bottom:0;left:0;right:0;height:90px;z-index:0;pointer-events:none;overflow:hidden}
+  .wave-bottom svg{width:100%;height:100%}
+
+  /* dot grids */
+  .dot-grid,.dot-grid-bl{position:fixed;display:grid;gap:5px;z-index:0;pointer-events:none}
+  .dot-grid{top:14px;left:14px;grid-template-columns:repeat(6,8px)}
+  .dot-grid-bl{bottom:16px;left:16px;grid-template-columns:repeat(5,8px)}
+  .dot-grid span,.dot-grid-bl span{width:4px;height:4px;border-radius:50%;background:#8ba3e8;display:block}
+  .dot-grid span{opacity:.45}
+  .dot-grid-bl span{opacity:.35}
+
+  .screen{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh;padding-bottom:80px}
+
+  /* header */
+  header{display:flex;align-items:center;justify-content:center;padding:18px 24px 0;position:relative}
+  .header-left{position:absolute;left:24px;top:50%;transform:translateY(-50%)}
+  .header-left img{height:36px;object-fit:contain}
+  .logo img{height:100px;object-fit:contain}
+  .live-badge{position:absolute;right:24px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:12px;background:var(--white);border:1px solid #dde3f5;border-radius:8px;padding:6px 14px;font-size:.85rem;font-weight:600;color:var(--text-dark)}
+  .live-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px #bbf7d0;animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 3px #bbf7d0}50%{box-shadow:0 0 0 6px #86efac}}
+  .live-divider{width:1px;height:18px;background:#dde3f5}
+
+  /* main layout */
+  .main{display:flex;flex:1;padding:18px 14px 0;gap:14px}
+
+  /* sidebar */
+  .sidebar{display:flex;flex-direction:column;gap:6px;width:88px;flex-shrink:0}
+  .nav-item{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border-radius:var(--radius-sm);cursor:pointer;font-size:.68rem;font-weight:600;color:var(--text-grey);background:transparent;transition:background .2s,color .2s;text-align:center}
+  .nav-item svg{width:22px;height:22px}
+  .nav-item.active{background:var(--blue);color:var(--white)}
+
+  /* content */
+  .content{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+  /* pool card */
+  .pool-card{background:var(--white);border-radius:var(--radius);padding:20px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:14px}
+  .pool-title{font-size:1.1rem;font-weight:700;color:var(--text-dark);display:flex;align-items:center;gap:8px;border-left:4px solid var(--yellow);padding-left:10px}
+  .pool-title span{color:var(--blue-mid)}
+
+  /* entered/exited row */
+  .stats-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat-box{background:var(--bg);border-radius:var(--radius-sm);padding:14px 16px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden}
+  .stat-box::after{content:'';position:absolute;bottom:0;left:0;right:0;height:4px;border-radius:0 0 var(--radius-sm) var(--radius-sm)}
+  .stat-box.entered::after{background:var(--blue)}
+  .stat-box.exited::after{background:var(--yellow)}
+  .stat-top{display:flex;align-items:center;gap:10px}
+  .stat-icon{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  .stat-icon.blue-bg{background:#dce6fb}
+  .stat-icon.yellow-bg{background:var(--yellow-light)}
+  .stat-label{font-size:.6rem;font-weight:700;color:var(--text-grey);letter-spacing:.05em;text-transform:uppercase}
+  .stat-value{font-size:2rem;font-weight:800;color:var(--text-dark);line-height:1;transition:transform .2s,color .3s}
+
+  /* pool count */
+  .pool-count-box{background:var(--bg);border-radius:var(--radius-sm);padding:14px 16px}
+  .pool-count-header{display:flex;align-items:center;gap:7px;font-size:.7rem;font-weight:700;color:var(--blue-mid);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+  .pool-count-number{font-size:2.4rem;font-weight:800;color:var(--blue-mid);line-height:1;transition:transform .2s}
+  .pool-count-label{font-size:.75rem;color:var(--text-grey);font-weight:500;margin-left:4px}
+
+  /* metrics row */
+  .metrics-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  .metric{background:var(--bg);border-radius:var(--radius-sm);padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+  .metric-label{font-size:.55rem;font-weight:600;color:var(--text-grey);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:center}
+  .metric-value{font-size:1.1rem;font-weight:800;color:var(--text-dark);transition:transform .2s,color .3s}
+  .metric-value.warn{color:var(--orange-warn)}
+
+  /* footer */
+  footer{text-align:center;padding:14px;position:relative;z-index:1;font-size:.8rem;color:var(--text-grey)}
+  .footer-inner{display:flex;align-items:center;justify-content:center;gap:10px}
+  .footer-inner img{height:32px;object-fit:contain;border-radius:6px}
+  footer strong{color:var(--blue-mid);font-weight:700;font-size:.85rem}
+
+  /* animation helpers */
+  .value-flash{transform:scale(1.08)!important;color:var(--blue-mid)!important}
+
+  @media(max-width:1024px){.content{grid-template-columns:1fr}}
+  @media(max-width:768px){.metrics-row{grid-template-columns:repeat(3,1fr)}}
+</style>
 </head>
 <body>
-    <div class="container">
-        <!-- Alert Banner -->
-        <div class="alert-banner" id="alert-banner">
-            <strong>⚠️ High Capacity Alert!</strong>
-            Pool count exceeded 90% of maximum capacity
-        </div>
-        
-        <!-- Downtime Warning Banner -->
-        <div class="alert-banner" id="downtime-banner" style="display: none; background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%); animation: slideDown 0.5s ease-out;">
-            <strong>⚠️ System Downtime Detected!</strong>
-            <span id="downtime-message"></span>
-            <div style="margin-top: 8px; font-size: 12px; opacity: 0.9;" id="downtime-details"></div>
-        </div>
-        
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="brand">
-                <img src="{{ url_for('static', filename='Sakshi-removebg-preview.png') }}" alt="Sakshi" style="max-width:140px; height:auto; display:block;">
-                <img src="{{ url_for('static', filename='Wonderla.png') }}" alt="Wonderla" style="max-width:160px; height:auto; display:block; margin-top:6px;">
-                <div class="subtitle">Pool Monitoring System</div>
-            </div>
-            
-            <div class="stats-mini">
-                <div class="stat-mini in">
-                    <div class="stat-mini-label">Total In</div>
-                    <div class="stat-mini-value" id="sidebar-in">0</div>
-                </div>
-                <div class="stat-mini out">
-                    <div class="stat-mini-label">Total Out</div>
-                    <div class="stat-mini-value" id="sidebar-out">0</div>
-                </div>
-                <div class="stat-mini pool">
-                    <div class="stat-mini-label">In Pool</div>
-                    <div class="stat-mini-value" id="sidebar-pool">0</div>
-                </div>
-            </div>
-            
-            <div class="quick-actions">
-                <div class="quick-action-title">Quick Actions</div>
-                <button class="action-btn" onclick="toggleFullscreen()">
-                    🖥️ Fullscreen Mode
-                </button>
-                <button class="action-btn danger" onclick="resetCounters()">
-                    🔄 Reset Counters
-                </button>
-            </div>
-            
-            <div class="system-info">
-                <div class="info-item">
-                    <span class="info-label">Status:</span>
-                    <span class="info-value" style="color: #38ef7d;">● LIVE</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">FPS:</span>
-                    <span class="info-value" id="sidebar-fps">0</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">Uptime:</span>
-                    <span class="info-value" id="uptime">00:00:00</span>
-                </div>
-            </div>
-            
-            <!-- Stream Health -->
-            <div class="system-info" style="margin-top: 15px; border-top: 2px solid rgba(255,255,255,0.1); padding-top: 15px;">
-                <div class="quick-action-title" style="margin-bottom: 10px;">📡 Stream Health</div>
-                <div class="info-item">
-                    <span class="info-label">Health:</span>
-                    <span class="info-value" id="stream-health" style="color: #38ef7d;">● Good</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">Valid Frames:</span>
-                    <span class="info-value" id="valid-frames">0 / 0</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">Corruption:</span>
-                    <span class="info-value" id="corruption-rate" style="color: #38ef7d;">0%</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">Transport:</span>
-                    <span class="info-value" style="color: #11998e;">TCP</span>
-                </div>
-            </div>
-        </aside>
-        
-        <!-- Main Content -->
-        <main class="main">
-            <!-- Topbar -->
-            <div class="topbar">
-                <div class="topbar-content">
-                    <div class="title">
-                        <h2>Live Pool Monitoring</h2>
-                        <div class="sub">
-                            <span class="status-indicator"></span>
-                            Real-time RTSP Stream Analysis
-                        </div>
-                    </div>
-                    <div class="time-display" id="current-time"></div>
-                </div>
-            </div>
-            
-            <!-- Metrics -->
-            <div class="metrics">
-                <!-- IN Card -->
-                <div class="metric-card in-card">
-                    <div class="metric-header">
-                        <div class="metric-icon">🔽</div>
-                        <div class="metric-trend" id="in-trend" style="display: none;">
-                            <span>↗</span>
-                            <span id="in-change">+0</span>
-                        </div>
-                    </div>
-                    <div class="metric-label">Total Entered</div>
-                    <div class="metric-value" id="in-count">0</div>
-                    <div class="comparison-bar">
-                        <div class="comparison-fill" id="in-bar" style="--accent-gradient: linear-gradient(90deg, #11998e, #38ef7d); width: 0%"></div>
-                    </div>
-                </div>
-                
-                <!-- OUT Card -->
-                <div class="metric-card out-card">
-                    <div class="metric-header">
-                        <div class="metric-icon">🔼</div>
-                        <div class="metric-trend down" id="out-trend" style="display: none;">
-                            <span>↘</span>
-                            <span id="out-change">+0</span>
-                        </div>
-                    </div>
-                    <div class="metric-label">Total Exited</div>
-                    <div class="metric-value" id="out-count">0</div>
-                    <div class="comparison-bar">
-                        <div class="comparison-fill" id="out-bar" style="--accent-gradient: linear-gradient(90deg, #ee0979, #ff6a00); width: 0%"></div>
-                    </div>
-                </div>
-                
-                <!-- Pool Count Card -->
-                <div class="metric-card pool-card">
-                    <div class="pool-banner">
-                        <div class="pool-content">
-                            <div class="pool-label">🏊 Current Pool Count</div>
-                            <div class="pool-value" id="pool-count">0</div>
-                            <div class="pool-subtext">People Currently in Pool Area</div>
-                            
-                            <div class="pool-stats">
-                                <div class="pool-stat">
-                                    <div class="pool-stat-label">Active Heads</div>
-                                    <div class="pool-stat-value" id="current-heads">0</div>
-                                </div>
-                                <div class="pool-stat">
-                                    <div class="pool-stat-label">Processing FPS</div>
-                                    <div class="pool-stat-value" id="fps-stat">0</div>
-                                </div>
-                                <div class="pool-stat">
-                                    <div class="pool-stat-label">⚠️ Missed IN</div>
-                                    <div class="pool-stat-value" id="missed-in" style="color: #ffc107;">0</div>
-                                </div>
-                                <div class="pool-stat">
-                                    <div class="pool-stat-label">Occupancy Rate</div>
-                                    <div class="pool-stat-value" id="occupancy-rate">0%</div>
-                                </div>
-                                <div class="pool-stat">
-                                    <div class="pool-stat-label">Peak Today</div>
-                                    <div class="pool-stat-value" id="peak-count">0</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Video Feed -->
-            <div class="video-section">
-                <div class="video-header">
-                    <div class="video-title">
-                        <span>📹</span>
-                        <span>Live Camera Feed</span>
-                    </div>
-                    <div class="fps-badge">
-                        <span id="fps-badge">0 FPS</span>
-                    </div>
-                </div>
-                <div class="video-wrapper">
-                    <img src="{{ url_for('video_feed') }}" alt="RTSP Stream">
-                </div>
-            </div>
-        </main>
-    </div>
 
-    <script>
-        // State tracking
-        let previousStats = { in_count: 0, out_count: 0, pool_count: 0, current_heads: 0, fps: 0, 
-                              valid_frames: 0, total_frames: 0, corruption_rate: 0, stream_health: 'Unknown' };
-        let peakCount = 0;
-        let startTime = Date.now();
-        const MAX_CAPACITY = 600;
-        
-        // Update time displays
-        function updateTime() {
-            const now = new Date();
-            document.getElementById('current-time').textContent = now.toLocaleString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-                hour: '2-digit', minute: '2-digit', second: '2-digit'
-            });
-            
-            // Update uptime
-            const elapsed = Date.now() - startTime;
-            const hours = Math.floor(elapsed / 3600000);
-            const minutes = Math.floor((elapsed % 3600000) / 60000);
-            const seconds = Math.floor((elapsed % 60000) / 1000);
-            document.getElementById('uptime').textContent = 
-                `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-        }
-        
-        // Update statistics
-        function updateStats() {
-            fetch('/stats')
-                .then(r => r.json())
-                .then(data => {
-                    // Update main values
-                    animateValue('in-count', data.in_count);
-                    animateValue('out-count', data.out_count);
-                    animateValue('pool-count', data.pool_count);
-                    animateValue('current-heads', data.current_heads);
-                    animateValue('fps-stat', data.fps);
-                    
-                    // Update sidebar
-                    document.getElementById('sidebar-in').textContent = data.in_count;
-                    document.getElementById('sidebar-out').textContent = data.out_count;
-                    document.getElementById('sidebar-pool').textContent = data.pool_count;
-                    document.getElementById('sidebar-fps').textContent = data.fps.toFixed(1);
-                    
-                    // Update FPS badges
-                    document.getElementById('fps-badge').textContent = data.fps.toFixed(1) + ' FPS';
-                    
-                    // Update stream health metrics
-                    if (data.stream_health) {
-                        const healthEl = document.getElementById('stream-health');
-                        healthEl.textContent = '● ' + data.stream_health;
-                        if (data.stream_health === 'Good') {
-                            healthEl.style.color = '#38ef7d';
-                        } else if (data.stream_health === 'Warning') {
-                            healthEl.style.color = '#ffc107';
-                        } else {
-                            healthEl.style.color = '#dc3545';
-                        }
-                    }
-                    
-                    if (data.valid_frames !== undefined && data.total_frames !== undefined) {
-                        document.getElementById('valid-frames').textContent = data.valid_frames + ' / ' + data.total_frames;
-                    }
-                    
-                    if (data.corruption_rate !== undefined) {
-                        const corruptEl = document.getElementById('corruption-rate');
-                        corruptEl.textContent = data.corruption_rate.toFixed(1) + '%';
-                        if (data.corruption_rate < 10) {
-                            corruptEl.style.color = '#38ef7d';
-                        } else if (data.corruption_rate < 30) {
-                            corruptEl.style.color = '#ffc107';
-                        } else {
-                            corruptEl.style.color = '#dc3545';
-                        }
-                    }
-                    
-                    // Update trends
-                    updateTrend('in', data.in_count, previousStats.in_count);
-                    updateTrend('out', data.out_count, previousStats.out_count);
-                    
-                    // Update comparison bars
-                    const total = data.in_count + data.out_count;
-                    if (total > 0) {
-                        document.getElementById('in-bar').style.width = ((data.in_count / total) * 100) + '%';
-                        document.getElementById('out-bar').style.width = ((data.out_count / total) * 100) + '%';
-                    }
-                    
-                    // Update missed detections
-                    const missedInEl = document.getElementById('missed-in');
-                    if (missedInEl) {
-                        missedInEl.textContent = data.missed_in_count || 0;
-                        missedInEl.style.color = data.missed_in_count > 0 ? '#ffc107' : '#38ef7d';
-                    }
-                    
-                    // Handle downtime warnings
-                    if (data.has_downtime && data.downtime_periods && data.downtime_periods.length > 0) {
-                        showDowntimeWarning(data.downtime_periods, data.total_downtime_minutes);
-                    } else {
-                        hideDowntimeWarning();
-                    }
-                    
-                    // Update peak
-                    if (data.pool_count > peakCount) {
-                        peakCount = data.pool_count;
-                        animateValue('peak-count', peakCount);
-                    }
-                    
-                    // Update occupancy
-                    const occupancy = Math.min((data.pool_count / MAX_CAPACITY) * 100, 100);
-                    document.getElementById('occupancy-rate').textContent = occupancy.toFixed(0) + '%';
-                    
-                    // Check capacity alert
-                    if (data.pool_count >= MAX_CAPACITY * 0.9) showAlert();
-                    
-                    previousStats = {...data};
-                })
-                .catch(err => console.error('Stats error:', err));
-        }
-        
-        function animateValue(id, newValue) {
-            const el = document.getElementById(id);
-            const current = parseInt(el.textContent) || 0;
-            
-            if (current !== newValue) {
-                el.style.transform = 'scale(1.1)';
-                el.style.color = '#3b82f6';
-                
-                let start = current;
-                const duration = 300;
-                const increment = (newValue - start) / (duration / 16);
-                
-                const timer = setInterval(() => {
-                    start += increment;
-                    if ((increment > 0 && start >= newValue) || (increment < 0 && start <= newValue)) {
-                        start = newValue;
-                        clearInterval(timer);
-                    }
-                    el.textContent = Math.round(start);
-                }, 16);
-                
-                setTimeout(() => {
-                    el.style.transform = 'scale(1)';
-                    el.style.color = '';
-                }, 300);
-            }
-        }
-        
-        function updateTrend(type, current, previous) {
-            const trendEl = document.getElementById(type + '-trend');
-            const changeEl = document.getElementById(type + '-change');
-            const change = current - previous;
-            
-            if (change > 0) {
-                trendEl.style.display = 'flex';
-                changeEl.textContent = '+' + change;
-                setTimeout(() => trendEl.style.display = 'none', 3000);
-            }
-        }
-        
-        function showAlert() {
-            const alert = document.getElementById('alert-banner');
-            alert.classList.add('show');
-            setTimeout(() => alert.classList.remove('show'), 5000);
-        }
-        
-        function showDowntimeWarning(downtimePeriods, totalMinutes) {
-            const banner = document.getElementById('downtime-banner');
-            const message = document.getElementById('downtime-message');
-            const details = document.getElementById('downtime-details');
-            
-            // Create message based on number of incidents
-            const count = downtimePeriods.length;
-            const typeText = downtimePeriods[0].type === 'shutdown' ? 'PC Shutdown' : 'Stream Issue';
-            
-            if (count === 1) {
-                message.textContent = `${typeText} detected today (${totalMinutes} min). Counting accuracy may be affected.`;
-            } else {
-                message.textContent = `${count} interruptions detected today (${totalMinutes} min total). Counting accuracy may be affected.`;
-            }
-            
-            // Create detailed list
-            let detailsHtml = 'Downtime periods: ';
-            downtimePeriods.forEach((period, idx) => {
-                const icon = period.type === 'shutdown' ? '🔌' : '📡';
-                detailsHtml += `${icon} ${period.start_display} - ${period.end_display} (${period.duration_minutes} min)`;
-                if (idx < downtimePeriods.length - 1) {
-                    detailsHtml += ' • ';
-                }
-            });
-            details.innerHTML = detailsHtml;
-            
-            banner.style.display = 'block';
-        }
-        
-        function hideDowntimeWarning() {
-            const banner = document.getElementById('downtime-banner');
-            banner.style.display = 'none';
-        }
-        
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen();
-            } else {
-                document.exitFullscreen();
-            }
-        }
-        
-        function resetCounters() {
-            if (confirm('Reset all counters? This cannot be undone.')) {
-                fetch('/reset', { method: 'POST' })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.success) {
-                            const alert = document.getElementById('alert-banner');
-                            alert.innerHTML = '<strong>✓ Reset Successful!</strong> All counters have been reset';
-                            alert.style.background = 'linear-gradient(135deg, #38ef7d, #11998e)';
-                            alert.classList.add('show');
-                            
-                            setTimeout(() => {
-                                alert.classList.remove('show');
-                                alert.style.background = 'linear-gradient(135deg, #ff6b6b, #ee5a6f)';
-                                alert.innerHTML = '<strong>⚠️ High Capacity Alert!</strong> Pool count exceeded 90% of maximum capacity';
-                            }, 3000);
-                            
-                            peakCount = 0;
-                        }
-                    })
-                    .catch(err => alert('Error: ' + err));
-            }
-        }
-        
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'r' || e.key === 'R') location.reload();
-            if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-        });
-        
-        // Click to copy
-        document.querySelectorAll('.metric-value, .pool-value, .stat-mini-value').forEach(el => {
-            el.style.cursor = 'pointer';
-            el.title = 'Click to copy';
-            el.addEventListener('click', function() {
-                const value = this.textContent;
-                navigator.clipboard.writeText(value).then(() => {
-                    const original = this.textContent;
-                    this.textContent = '✓';
-                    setTimeout(() => this.textContent = original, 1000);
-                });
-            });
-        });
-        
-        // Initialize
-        updateTime();
-        setInterval(updateTime, 1000);
-        updateStats();
-        setInterval(updateStats, 500);
-        
-        console.log('🎯 Wonderla Pool Monitoring Dashboard');
-        console.log('📊 Keyboard: R=Reload | F=Fullscreen');
-    </script>
+<!-- decorative dots -->
+<div class="dot-grid"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+<div class="dot-grid-bl"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+
+<!-- wave decoration -->
+<div class="wave-bottom">
+  <svg viewBox="0 0 1440 90" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M0,60 C360,0 720,90 1080,40 C1260,10 1380,60 1440,50 L1440,90 L0,90 Z" fill="#c8d9ff" opacity=".65"/>
+    <path d="M0,75 C400,30 800,80 1200,55 C1320,45 1400,70 1440,65 L1440,90 L0,90 Z" fill="#f5c518" opacity=".35"/>
+  </svg>
+</div>
+
+<div class="screen">
+  <header>
+    <div class="header-left">
+      <img src="{{ url_for('static', filename='sakshiai_logo.png') }}" alt="Sakshi.AI">
+    </div>
+    <div class="logo">
+      <img src="{{ url_for('static', filename='Wonderla.png') }}" alt="Wonderla">
+    </div>
+    <div class="live-badge">
+      <span class="live-dot"></span>
+      <span style="font-size:.82rem;font-weight:700;color:#1a3ab5">LIVE</span>
+      <div class="live-divider"></div>
+      <span id="clock">--:-- --</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- sidebar -->
+    <nav class="sidebar">
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="2" fill="white"/><rect x="13" y="2" width="9" height="9" rx="2" fill="white"/><rect x="2" y="13" width="9" height="9" rx="2" fill="white"/><rect x="13" y="13" width="9" height="9" rx="2" fill="white"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 18l5-7 4 4 4-6 5 4" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="21" x2="21" y2="21" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
+        Analytics
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#6b7280" stroke-width="2"/><path d="M12 7v5l3 3" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
+        History
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="#6b7280" stroke-width="2"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
+        Settings
+      </div>
+    </nav>
+
+    <div class="content">
+      <!-- POOL 01 -->
+      <div class="pool-card">
+        <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 01</span></div>
+        <div class="stats-row">
+          <div class="stat-box entered">
+            <div class="stat-top">
+              <div class="stat-icon blue-bg">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><circle cx="10" cy="8" r="4" fill="#2952cc"/><path d="M2 22c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="20" cy="8" r="3" fill="#2952cc" opacity=".5"/><path d="M20 17c1.7.6 3 2.2 3 4.5" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none" opacity=".5"/></svg>
+              </div>
+              <div><div class="stat-label">Total Entered</div></div>
+            </div>
+            <div class="stat-value" id="p1-in">0</div>
+          </div>
+          <div class="stat-box exited">
+            <div class="stat-top">
+              <div class="stat-icon yellow-bg">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><circle cx="10" cy="8" r="4" fill="#c8a000"/><path d="M2 22c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#c8a000" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="20" cy="8" r="3" fill="#c8a000" opacity=".5"/><path d="M20 17c1.7.6 3 2.2 3 4.5" stroke="#c8a000" stroke-width="2" stroke-linecap="round" fill="none" opacity=".5"/></svg>
+              </div>
+              <div><div class="stat-label">Total Exited</div></div>
+            </div>
+            <div class="stat-value" id="p1-out">0</div>
+          </div>
+        </div>
+        <div class="pool-count-box">
+          <div class="pool-count-header">
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><circle cx="9" cy="7" r="3.5" fill="#2952cc"/><path d="M2 19c0-3.9 3.1-7 7-7s7 3.1 7 7" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M17 10l2 2 3-3" stroke="#2952cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Current Pool Count
+          </div>
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div class="pool-count-number" id="p1-pool">0</div>
+            <div class="pool-count-label">People Currently In Pool Area</div>
+          </div>
+        </div>
+        <div class="metrics-row">
+          <div class="metric"><div class="metric-label">👤 Active Heads</div><div class="metric-value" id="p1-heads">0</div></div>
+          <div class="metric"><div class="metric-label">▶ Processing FPS</div><div class="metric-value" id="p1-fps">0</div></div>
+          <div class="metric"><div class="metric-label">⚠ Missed IN</div><div class="metric-value warn" id="p1-missed">0</div></div>
+          <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p1-occ">0%</div></div>
+          <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p1-peak">0</div></div>
+        </div>
+      </div>
+
+      <!-- POOL 02 -->
+      <div class="pool-card">
+        <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 02</span></div>
+        <div class="stats-row">
+          <div class="stat-box entered">
+            <div class="stat-top">
+              <div class="stat-icon blue-bg">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><circle cx="10" cy="8" r="4" fill="#2952cc"/><path d="M2 22c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="20" cy="8" r="3" fill="#2952cc" opacity=".5"/><path d="M20 17c1.7.6 3 2.2 3 4.5" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none" opacity=".5"/></svg>
+              </div>
+              <div><div class="stat-label">Total Entered</div></div>
+            </div>
+            <div class="stat-value" id="p2-in">0</div>
+          </div>
+          <div class="stat-box exited">
+            <div class="stat-top">
+              <div class="stat-icon yellow-bg">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><circle cx="10" cy="8" r="4" fill="#c8a000"/><path d="M2 22c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="#c8a000" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="20" cy="8" r="3" fill="#c8a000" opacity=".5"/><path d="M20 17c1.7.6 3 2.2 3 4.5" stroke="#c8a000" stroke-width="2" stroke-linecap="round" fill="none" opacity=".5"/></svg>
+              </div>
+              <div><div class="stat-label">Total Exited</div></div>
+            </div>
+            <div class="stat-value" id="p2-out">0</div>
+          </div>
+        </div>
+        <div class="pool-count-box">
+          <div class="pool-count-header">
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><circle cx="9" cy="7" r="3.5" fill="#2952cc"/><path d="M2 19c0-3.9 3.1-7 7-7s7 3.1 7 7" stroke="#2952cc" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M17 10l2 2 3-3" stroke="#2952cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Current Pool Count
+          </div>
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div class="pool-count-number" id="p2-pool">0</div>
+            <div class="pool-count-label">People Currently In Pool Area</div>
+          </div>
+        </div>
+        <div class="metrics-row">
+          <div class="metric"><div class="metric-label">👤 Active Heads</div><div class="metric-value" id="p2-heads">0</div></div>
+          <div class="metric"><div class="metric-label">▶ Processing FPS</div><div class="metric-value" id="p2-fps">0</div></div>
+          <div class="metric"><div class="metric-label">⚠ Missed IN</div><div class="metric-value warn" id="p2-missed">0</div></div>
+          <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p2-occ">0%</div></div>
+          <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p2-peak">0</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="footer-inner">
+      <span>Powered by</span>
+      <img src="{{ url_for('static', filename='thinkneuralai_logo.jpg') }}" alt="Thinkneuralai">
+      <strong>Thinkneuralai</strong>
+    </div>
+  </footer>
+</div>
+
+<script>
+const MAX_CAPACITY = 600;
+
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleString('en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+}
+
+function animateValue(el, newVal) {
+  const cur = parseInt(el.textContent) || 0;
+  if (cur === newVal) return;
+  el.classList.add('value-flash');
+  let start = cur;
+  const inc = (newVal - start) / 15;
+  const timer = setInterval(() => {
+    start += inc;
+    if ((inc > 0 && start >= newVal) || (inc < 0 && start <= newVal) || inc === 0) {
+      start = newVal;
+      clearInterval(timer);
+    }
+    el.textContent = Math.round(start);
+  }, 16);
+  setTimeout(() => el.classList.remove('value-flash'), 300);
+}
+
+function updatePool(prefix, data) {
+  animateValue(document.getElementById(prefix + '-in'), data.in_count);
+  animateValue(document.getElementById(prefix + '-out'), data.out_count);
+  animateValue(document.getElementById(prefix + '-pool'), data.pool_count);
+  animateValue(document.getElementById(prefix + '-heads'), data.current_heads);
+  document.getElementById(prefix + '-fps').textContent = data.fps;
+  const missedEl = document.getElementById(prefix + '-missed');
+  missedEl.textContent = data.missed_in_count || 0;
+  missedEl.className = (data.missed_in_count > 0) ? 'metric-value warn' : 'metric-value';
+  const occ = Math.min((data.pool_count / MAX_CAPACITY) * 100, 100);
+  document.getElementById(prefix + '-occ').textContent = occ.toFixed(0) + '%';
+  document.getElementById(prefix + '-peak').textContent = data.peak_pool_count || 0;
+}
+
+function updateStats() {
+  fetch('/stats')
+    .then(r => r.json())
+    .then(data => {
+      if (data.pool1) updatePool('p1', data.pool1);
+      if (data.pool2) updatePool('p2', data.pool2);
+    })
+    .catch(err => console.error('Stats error:', err));
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'r' || e.key === 'R') location.reload();
+  if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+});
+
+updateClock();
+setInterval(updateClock, 1000);
+updateStats();
+setInterval(updateStats, 500);
+</script>
 </body>
 </html>

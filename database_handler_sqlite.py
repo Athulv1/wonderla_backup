@@ -1,6 +1,7 @@
 """
 SQLite Database Handler for Head Counter
 Stores counting events and statistics without requiring a database server
+Supports multiple pools via pool_id
 """
 
 import sqlite3
@@ -30,24 +31,25 @@ class DatabaseHandler:
                 object_id INTEGER,
                 total_in INTEGER,
                 total_out INTEGER,
-                net_count INTEGER
+                net_count INTEGER,
+                pool_id TEXT DEFAULT 'pool1'
             )
         ''')
         
         # Daily summary table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_summary (
-                date TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
                 total_in INTEGER DEFAULT 0,
                 total_out INTEGER DEFAULT 0,
                 net_count INTEGER DEFAULT 0,
                 peak_pool_count INTEGER DEFAULT 0,
-                last_updated TEXT
+                last_updated TEXT,
+                pool_id TEXT DEFAULT 'pool1',
+                UNIQUE(date, pool_id)
             )
         ''')
-        
-        # Migrate existing table if needed
-        self._migrate_tables()
         
         # Hourly statistics table
         self.cursor.execute('''
@@ -59,7 +61,8 @@ class DatabaseHandler:
                 total_out INTEGER DEFAULT 0,
                 net_count INTEGER DEFAULT 0,
                 last_updated TEXT,
-                UNIQUE(date, hour)
+                pool_id TEXT DEFAULT 'pool1',
+                UNIQUE(date, hour, pool_id)
             )
         ''')
         
@@ -70,82 +73,68 @@ class DatabaseHandler:
                 timestamp TEXT NOT NULL,
                 fps REAL,
                 current_heads INTEGER,
-                status TEXT
+                status TEXT,
+                pool_id TEXT DEFAULT 'pool1'
             )
         ''')
         
         self.conn.commit()
+        self._migrate_tables()
     
     def _migrate_tables(self):
         """Migrate existing tables to add missing columns"""
-        try:
-            # Check if last_updated column exists in daily_summary
-            self.cursor.execute("PRAGMA table_info(daily_summary)")
-            columns = [col[1] for col in self.cursor.fetchall()]
-            
-            if 'last_updated' not in columns:
-                print("📦 Migrating daily_summary: adding last_updated column...")
-                self.cursor.execute('''
-                    ALTER TABLE daily_summary ADD COLUMN last_updated TEXT
-                ''')
-                self.conn.commit()
-                print("✓ daily_summary migration complete")
-            
-            # Check if last_updated column exists in hourly_stats
-            self.cursor.execute("PRAGMA table_info(hourly_stats)")
-            columns = [col[1] for col in self.cursor.fetchall()]
-            
-            if columns and 'last_updated' not in columns:
-                print("📦 Migrating hourly_stats: adding last_updated column...")
-                self.cursor.execute('''
-                    ALTER TABLE hourly_stats ADD COLUMN last_updated TEXT
-                ''')
-                self.conn.commit()
-                print("✓ hourly_stats migration complete")
-            
-            # Check if status column exists in system_health
-            self.cursor.execute("PRAGMA table_info(system_health)")
-            columns = [col[1] for col in self.cursor.fetchall()]
-            
-            if columns and 'status' not in columns:
-                print("📦 Migrating system_health: adding status column...")
-                self.cursor.execute('''
-                    ALTER TABLE system_health ADD COLUMN status TEXT
-                ''')
-                self.conn.commit()
-                print("✓ system_health migration complete")
-        except Exception as e:
-            # Table might not exist yet, that's okay
-            pass
+        migrations = {
+            'daily_summary': ['last_updated', 'pool_id'],
+            'hourly_stats': ['last_updated', 'pool_id'],
+            'system_health': ['status', 'pool_id'],
+            'events': ['pool_id'],
+        }
+        
+        for table, columns in migrations.items():
+            try:
+                self.cursor.execute(f"PRAGMA table_info({table})")
+                existing_cols = [col[1] for col in self.cursor.fetchall()]
+                
+                for col in columns:
+                    if col not in existing_cols:
+                        default = "'pool1'" if col == 'pool_id' else 'NULL'
+                        print(f"📦 Migrating {table}: adding {col} column...")
+                        self.cursor.execute(f'''
+                            ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT {default}
+                        ''')
+                        self.conn.commit()
+                        print(f"✓ {table}.{col} migration complete")
+            except Exception:
+                pass
     
-    def log_event(self, event_type, object_id, total_in, total_out, net_count):
+    def log_event(self, event_type, object_id, total_in, total_out, net_count, pool_id='pool1'):
         """Log a counting event"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.cursor.execute('''
-            INSERT INTO events (timestamp, event_type, object_id, total_in, total_out, net_count)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (timestamp, event_type, object_id, total_in, total_out, net_count))
+            INSERT INTO events (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, event_type, object_id, total_in, total_out, net_count, pool_id))
         self.conn.commit()
     
-    def update_daily_summary(self, total_in, total_out, net_count, peak_pool_count):
+    def update_daily_summary(self, total_in, total_out, net_count, peak_pool_count, pool_id='pool1'):
         """Update or insert daily summary"""
         date = datetime.now().strftime('%Y-%m-%d')
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         self.cursor.execute('''
-            INSERT INTO daily_summary (date, total_in, total_out, net_count, peak_pool_count, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date) DO UPDATE SET
+            INSERT INTO daily_summary (date, total_in, total_out, net_count, peak_pool_count, last_updated, pool_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date, pool_id) DO UPDATE SET
                 total_in = ?,
                 total_out = ?,
                 net_count = ?,
                 peak_pool_count = MAX(peak_pool_count, ?),
                 last_updated = ?
-        ''', (date, total_in, total_out, net_count, peak_pool_count, timestamp,
+        ''', (date, total_in, total_out, net_count, peak_pool_count, timestamp, pool_id,
               total_in, total_out, net_count, peak_pool_count, timestamp))
         self.conn.commit()
     
-    def update_hourly_statistics(self, total_in, total_out, net_count):
+    def update_hourly_statistics(self, total_in, total_out, net_count, pool_id='pool1'):
         """Update or insert hourly statistics"""
         now = datetime.now()
         date = now.strftime('%Y-%m-%d')
@@ -153,34 +142,34 @@ class DatabaseHandler:
         timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
         
         self.cursor.execute('''
-            INSERT INTO hourly_stats (date, hour, total_in, total_out, net_count, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date, hour) DO UPDATE SET
+            INSERT INTO hourly_stats (date, hour, total_in, total_out, net_count, last_updated, pool_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date, hour, pool_id) DO UPDATE SET
                 total_in = ?,
                 total_out = ?,
                 net_count = ?,
                 last_updated = ?
-        ''', (date, hour, total_in, total_out, net_count, timestamp,
+        ''', (date, hour, total_in, total_out, net_count, timestamp, pool_id,
               total_in, total_out, net_count, timestamp))
         self.conn.commit()
     
-    def log_system_health(self, fps, current_heads, status):
+    def log_system_health(self, fps, current_heads, status, pool_id='pool1'):
         """Log system health metrics"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.cursor.execute('''
-            INSERT INTO system_health (timestamp, fps, current_heads, status)
-            VALUES (?, ?, ?, ?)
-        ''', (timestamp, fps, current_heads, status))
+            INSERT INTO system_health (timestamp, fps, current_heads, status, pool_id)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (timestamp, fps, current_heads, status, pool_id))
         self.conn.commit()
     
-    def get_today_summary(self):
-        """Get today's summary statistics"""
+    def get_today_summary(self, pool_id='pool1'):
+        """Get today's summary statistics for a specific pool"""
         date = datetime.now().strftime('%Y-%m-%d')
         self.cursor.execute('''
             SELECT total_in, total_out, net_count, peak_pool_count
             FROM daily_summary
-            WHERE date = ?
-        ''', (date,))
+            WHERE date = ? AND pool_id = ?
+        ''', (date, pool_id))
         
         row = self.cursor.fetchone()
         if row:
@@ -192,7 +181,7 @@ class DatabaseHandler:
             }
         return None
     
-    def detect_downtime_gaps(self, gap_threshold_minutes=5):
+    def detect_downtime_gaps(self, gap_threshold_minutes=5, pool_id='pool1'):
         """
         Detect downtime periods by finding gaps in system_health logs
         Returns list of downtime periods with start, end, and duration
@@ -203,9 +192,9 @@ class DatabaseHandler:
         self.cursor.execute('''
             SELECT timestamp 
             FROM system_health 
-            WHERE date(timestamp) = ?
+            WHERE date(timestamp) = ? AND pool_id = ?
             ORDER BY timestamp ASC
-        ''', (today,))
+        ''', (today, pool_id))
         
         logs = self.cursor.fetchall()
         
