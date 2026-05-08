@@ -125,6 +125,12 @@
   .chart-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#8892b0;font-size:13px;font-family:'Poppins',sans-serif}
   .chart-empty svg{opacity:.35}
 
+  .reset-bar{display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:clamp(6px,.8vw,10px) 0;margin-top:2px}
+  .reset-bar-btn{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:10px;padding:clamp(7px,.9vw,10px) clamp(12px,1.4vw,18px);font-size:clamp(.7rem,.85vw,.82rem);font-family:'Poppins',sans-serif;font-weight:700;cursor:pointer;background:#e11d48;color:#fff;transition:background .18s,opacity .18s;flex-shrink:0}
+  .reset-bar-btn:hover{background:#be123c}
+  .reset-bar-btn:disabled{opacity:.6;cursor:not-allowed}
+  .reset-bar-status{font-size:clamp(.62rem,.78vw,.76rem);color:var(--text-grey);transition:color .3s;text-align:right}
+
   /* ── Pool card ───────────────────────────────────────────── */
   .pool-card{background:var(--white);border-radius:var(--radius);padding:var(--card-pad);box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:var(--card-gap)}
   .pool-title{font-size:var(--pool-title-fs);font-weight:700;color:var(--text-dark);display:flex;align-items:center;gap:8px;border-left:4px solid var(--yellow);padding-left:10px}
@@ -329,6 +335,13 @@
         </div>
       </div>
     </div>
+    <div class="reset-bar">
+      <button class="reset-bar-btn" id="reset-counters-btn" onclick="resetAllCounts()">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M3.5 10a6.5 6.5 0 1 0 1.6-4.3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="1,5.5 3.5,10 7.5,7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        Reset All Counts
+      </button>
+      <span class="reset-bar-status" id="reset-status"></span>
+    </div>
     </div>
 
     <div class="view hidden" id="analytics-view">
@@ -388,6 +401,7 @@
         </div>
       </div>
     </div>
+
   </div>
 
   <footer>
@@ -606,6 +620,50 @@ function initNavSwitching() {
       }
     });
   });
+}
+
+function setResetStatus(message, isError = false) {
+  const statusEl = document.getElementById('reset-status');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? '#b42318' : '#20744a';
+}
+
+function applyZeroStatsToUi() {
+  const zeroStats = {
+    in_count: 0,
+    out_count: 0,
+    pool_count: 0,
+    current_heads: 0,
+    fps: 0,
+    missed_in_count: 0,
+    peak_pool_count: 0,
+  };
+  updatePool('p1', zeroStats);
+  updatePool('p2', zeroStats);
+}
+
+function resetAllCounts() {
+  if (!confirm('Reset all counts to zero for both pools?')) return;
+
+  const btn = document.getElementById('reset-counters-btn');
+  if (btn) btn.disabled = true;
+  setResetStatus('Resetting counters...');
+
+  fetch('/reset', { method: 'POST' })
+    .then(resp => resp.json())
+    .then(payload => {
+      if (!payload.success) throw new Error(payload.message || 'Reset failed');
+      applyZeroStatsToUi();
+      setResetStatus('All counters were reset to zero.');
+    })
+    .catch(err => {
+      console.error('Reset failed:', err);
+      setResetStatus(`Reset failed: ${err.message}`, true);
+    })
+    .finally(() => {
+      if (btn) btn.disabled = false;
+    });
 }
 
 document.addEventListener('keydown', (e) => {

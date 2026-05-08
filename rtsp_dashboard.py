@@ -778,6 +778,29 @@ class RTSPStreamProcessor:
             self.update_database_stats()
             self.db_handler.close()
 
+    def reset_counters(self):
+        """Reset runtime counters to zero."""
+        with self.lock:
+            self.in_count = 0
+            self.out_count = 0
+            self.pool_count = 0
+            self.current_heads = 0
+            self.peak_pool_count = 0
+            self.missed_in_count = 0
+            self.counted_ids.clear()
+            self.object_zones.clear()
+
+        try:
+            self.log_event('RESET', 'MANUAL')
+        except Exception:
+            pass
+
+        if self.db_handler:
+            try:
+                self.update_database_stats()
+            except Exception:
+                pass
+
 
 # Flask application
 app = Flask(__name__)
@@ -888,12 +911,7 @@ def reset_counts():
     """Reset all counters for all pools"""
     for pool_id, processor in processors.items():
         if processor:
-            processor.in_count = 0
-            processor.out_count = 0
-            processor.pool_count = 0
-            processor.peak_pool_count = 0
-            processor.missed_in_count = 0
-            processor.counted_ids.clear()
+            processor.reset_counters()
     return jsonify({'success': True, 'message': 'All counters reset successfully'})
 
 
