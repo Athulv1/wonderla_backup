@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wonderla – Live Pool Monitoring</title>
+<title>Wonderla – Pool Monitoring Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -34,11 +34,6 @@
   .header-left{position:absolute;left:24px;top:50%;transform:translateY(-50%)}
   .header-left img{height:36px;object-fit:contain}
   .logo img{height:100px;object-fit:contain}
-  .live-badge{position:absolute;right:24px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:12px;background:var(--white);border:1px solid #dde3f5;border-radius:8px;padding:6px 14px;font-size:.85rem;font-weight:600;color:var(--text-dark)}
-  .live-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px #bbf7d0;animation:pulse 1.6s ease-in-out infinite}
-  @keyframes pulse{0%,100%{box-shadow:0 0 0 3px #bbf7d0}50%{box-shadow:0 0 0 6px #86efac}}
-  .live-divider{width:1px;height:18px;background:#dde3f5}
-
   /* main layout */
   .main{display:flex;flex:1;padding:18px 14px 0;gap:14px}
 
@@ -82,12 +77,6 @@
   .metric-value{font-size:1.1rem;font-weight:800;color:var(--text-dark);transition:transform .2s,color .3s}
   .metric-value.warn{color:var(--orange-warn)}
 
-  /* video feed */
-  .video-feed-box{border-radius:var(--radius-sm);overflow:hidden;background:#000;position:relative;width:100%;aspect-ratio:16/9}
-  .video-feed-box img{width:100%;height:100%;object-fit:contain;display:block}
-  .video-label{position:absolute;top:8px;left:10px;background:rgba(0,0,0,.55);color:#fff;font-size:.65rem;font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:.04em}
-  .video-offline{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:.8rem;font-weight:600}
-
   /* footer */
   footer{text-align:center;padding:14px;position:relative;z-index:1;font-size:.8rem;color:var(--text-grey)}
   .footer-inner{display:flex;align-items:center;justify-content:center;gap:10px}
@@ -123,10 +112,7 @@
     <div class="logo">
       <img src="{{ url_for('static', filename='Wonderla.png') }}" alt="Wonderla">
     </div>
-    <div class="live-badge">
-      <span class="live-dot"></span>
-      <span style="font-size:.82rem;font-weight:700;color:#1a3ab5">LIVE</span>
-      <div class="live-divider"></div>
+    <div style="position:absolute;right:24px;top:50%;transform:translateY(-50%);font-size:.85rem;font-weight:600;color:var(--text-dark)">
       <span id="clock">--:-- --</span>
     </div>
   </header>
@@ -155,7 +141,7 @@
     <div class="content">
       <!-- POOL 01 -->
       <div class="pool-card">
-        <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 01</span></div>
+        <div class="pool-title"><span>Pool 01</span></div>
         <div class="stats-row">
           <div class="stat-box entered">
             <div class="stat-top">
@@ -193,15 +179,11 @@
           <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p1-occ">0%</div></div>
           <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p1-peak">0</div></div>
         </div>
-        <div class="video-feed-box">
-          <img src="/video_feed/pool1" alt="Pool 1 Live Feed">
-          <div class="video-label">POOL 01 · LIVE</div>
-        </div>
       </div>
 
       <!-- POOL 02 -->
       <div class="pool-card">
-        <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 02</span></div>
+        <div class="pool-title"><span>Pool 02</span></div>
         <div class="stats-row">
           <div class="stat-box entered">
             <div class="stat-top">
@@ -238,10 +220,6 @@
           <div class="metric"><div class="metric-label">⚠ Missed IN</div><div class="metric-value warn" id="p2-missed">0</div></div>
           <div class="metric"><div class="metric-label">● Occupancy Rate</div><div class="metric-value" id="p2-occ">0%</div></div>
           <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p2-peak">0</div></div>
-        </div>
-        <div class="video-feed-box">
-          <img src="/video_feed/pool2" alt="Pool 2 Live Feed">
-          <div class="video-label">POOL 02 · LIVE</div>
         </div>
       </div>
     </div>
