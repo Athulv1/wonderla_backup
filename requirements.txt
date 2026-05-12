@@ -1,6 +1,7 @@
 # YOLOv11 Training Requirements for RunPod RTX 5090
 
 # Core Dependencies
+flask>=2.0.0
 ultralytics>=8.1.0
 torch>=2.0.0
 torchvision>=0.15.0

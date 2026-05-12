@@ -232,6 +232,22 @@ class DatabaseHandler:
         ''', (date, total_in, total_out, net_count, peak_pool_count, ts, pool_id))
         cur.close()
 
+    def reset_daily_summary(self, pool_id='pool1'):
+        """Force all daily summary counters to zero, bypassing the MAX guard on peak."""
+        date = datetime.now().strftime('%Y-%m-%d')
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = self._execute('''
+            INSERT INTO daily_summary (date, total_in, total_out, net_count, peak_pool_count, last_updated, pool_id)
+            VALUES (?,0,0,0,0,?,?)
+            ON CONFLICT(date, pool_id) DO UPDATE SET
+                total_in=0,
+                total_out=0,
+                net_count=0,
+                peak_pool_count=0,
+                last_updated=excluded.last_updated
+        ''', (date, ts, pool_id))
+        cur.close()
+
     def update_hourly_statistics(self, total_in, total_out, net_count, pool_id='pool1'):
         now = datetime.now()
         date = now.strftime('%Y-%m-%d')
@@ -329,15 +345,24 @@ class DatabaseHandler:
             for row in rows
         ]
 
-    def get_hourly_guest_usage_report(self, date_str):
-        """Return hourly entered/exited/net per pool for the given date."""
-        rows = self._fetchall(
-            '''SELECT hour, pool_id, total_in, total_out, net_count
-               FROM hourly_stats
-               WHERE date=?
-               ORDER BY hour ASC, pool_id ASC''',
-            (date_str,)
-        )
+    def get_hourly_guest_usage_report(self, date_str, hour=None):
+        """Return hourly entered/exited/net per pool for the given date, optionally filtered to a single hour."""
+        if hour is not None:
+            rows = self._fetchall(
+                '''SELECT hour, pool_id, total_in, total_out, net_count
+                   FROM hourly_stats
+                   WHERE date=? AND hour=?
+                   ORDER BY pool_id ASC''',
+                (date_str, hour)
+            )
+        else:
+            rows = self._fetchall(
+                '''SELECT hour, pool_id, total_in, total_out, net_count
+                   FROM hourly_stats
+                   WHERE date=?
+                   ORDER BY hour ASC, pool_id ASC''',
+                (date_str,)
+            )
         return [
             {
                 'date': date_str,

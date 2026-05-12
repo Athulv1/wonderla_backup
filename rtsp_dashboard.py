@@ -15,6 +15,7 @@ import atexit
 from flask import Flask, render_template, Response, jsonify, request, send_file
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 import json
 from collections import defaultdict
@@ -169,7 +170,7 @@ class ReportManager:
             rows = self.db_handler.get_daily_guest_entry_report(date_str)
             columns = ['date', 'pool_id', 'total_entered']
         else:
-            rows = self.db_handler.get_hourly_guest_usage_report(date_str)
+            rows = self.db_handler.get_hourly_guest_usage_report(date_str, hour=hour)
             columns = ['date', 'hour', 'pool_id', 'total_entered', 'total_exited', 'net_count']
 
         filename = self._build_filename(report_type, date_str, hour=hour)
@@ -337,7 +338,7 @@ class RTSPStreamProcessor:
         self.device = 'cpu'
         if os.environ.get('FORCE_CPU', '0') != '1':
             try:
-                if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+                if torch.cuda.is_available():
                     self.device = 'cuda'
             except Exception:
                 self.device = 'cpu'
@@ -516,11 +517,11 @@ class RTSPStreamProcessor:
         """Process a single frame with error handling"""
         try:
             results = self.model.track(
-                frame, 
+                frame,
                 conf=self.conf_threshold,
                 iou=self.iou_threshold,
                 verbose=False,
-                imgsz=1280,
+                imgsz=640,
                 device=self.device,
                 half=(self.device == 'cuda'),
                 persist=True,
@@ -797,6 +798,7 @@ class RTSPStreamProcessor:
 
         if self.db_handler:
             try:
+                self.db_handler.reset_daily_summary(pool_id=self.pool_id)
                 self.update_database_stats()
             except Exception:
                 pass
