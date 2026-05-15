@@ -224,8 +224,8 @@ class DatabaseHandler:
             INSERT INTO daily_summary (date, total_in, total_out, net_count, peak_pool_count, last_updated, pool_id)
             VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(date, pool_id) DO UPDATE SET
-                total_in=excluded.total_in,
-                total_out=excluded.total_out,
+                total_in=MAX(total_in, excluded.total_in),
+                total_out=MAX(total_out, excluded.total_out),
                 net_count=excluded.net_count,
                 peak_pool_count=MAX(peak_pool_count, excluded.peak_pool_count),
                 last_updated=excluded.last_updated

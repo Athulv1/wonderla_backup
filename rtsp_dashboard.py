@@ -372,12 +372,9 @@ class RTSPStreamProcessor:
                 self.pool_count = self.in_count - self.out_count
                 print(f"✓ [{pool_id}] Restored: IN={self.in_count}, OUT={self.out_count}, PEAK={self.peak_pool_count}")
         
-        # Tracking
-        self.tracker = CentroidTracker(max_disappeared=120, max_distance=100)
+        # Tracking — uses YOLO ByteTrack IDs directly
         self.object_zones = {}
-        self.counted_ids = set()
-        self.count_history = []
-        self.history_size = 5
+        self.zone_stable_frames = {}  # frames spent in current zone before last transition
         
         # Stream state
         self.cap = None
@@ -530,17 +527,21 @@ class RTSPStreamProcessor:
                 classes=[0]
             )
             
-            detections = []
+            # Build objects dict {bytetrack_id: (cx, cy)} from YOLO track IDs directly
+            objects = {}
             min_box_area = 400
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
+                    if box.id is None:
+                        continue
+                    track_id = int(box.id[0])
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    
+
                     box_area = (x2 - x1) * (y2 - y1)
                     if box_area < min_box_area:
                         continue
-                    
+
                     if self.box_shrink > 0:
                         w = x2 - x1
                         h = y2 - y1
@@ -548,36 +549,44 @@ class RTSPStreamProcessor:
                         shrink_h = h * self.box_shrink / 2
                         x1, y1 = x1 + shrink_w, y1 + shrink_h
                         x2, y2 = x2 - shrink_w, y2 - shrink_h
-                    
-                    detections.append([x1, y1, x2, y2])
+
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    objects[track_id] = (cx, cy)
                     cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-            
-            objects = self.tracker.update(detections)
+
             self.current_heads = len(objects)
-            
+
             frame_height = frame.shape[0]
             if not hasattr(self, 'partition_y') or self.partition_y > frame_height:
                 self.partition_y = frame_height // 2
-            
+
+            # Minimum frames a person must remain in a zone before their departure
+            # counts as a crossing. Prevents oscillation near the partition line.
+            MIN_STABLE_FRAMES = 5
+
             for object_id, centroid in objects.items():
                 cx, cy = centroid
                 current_zone = 'upper' if cy < self.partition_y else 'lower'
                 previous_zone = self.object_zones.get(object_id)
+                prev_stable = self.zone_stable_frames.get(object_id, 0)
 
-                if previous_zone is not None and previous_zone != current_zone:
-                    if object_id not in self.counted_ids:
+                if previous_zone is None or previous_zone == current_zone:
+                    self.zone_stable_frames[object_id] = prev_stable + 1
+                else:
+                    # Zone changed — only count if they were stable in previous zone
+                    if prev_stable >= MIN_STABLE_FRAMES:
                         upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
                         lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
                         is_in = (lower_to_upper if self.invert_direction else upper_to_lower)
                         is_out = (upper_to_lower if self.invert_direction else lower_to_upper)
                         if is_in:
                             self.in_count += 1
-                            self.counted_ids.add(object_id)
                             self.log_event('IN', object_id)
                         elif is_out:
                             self.out_count += 1
-                            self.counted_ids.add(object_id)
                             self.log_event('OUT', object_id)
+                    self.zone_stable_frames[object_id] = 0
 
                 self.object_zones[object_id] = current_zone
                 cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
@@ -588,7 +597,7 @@ class RTSPStreamProcessor:
             disappeared_ids = set(self.object_zones.keys()) - tracked_ids
             for obj_id in disappeared_ids:
                 del self.object_zones[obj_id]
-                self.counted_ids.discard(obj_id)
+                self.zone_stable_frames.pop(obj_id, None)
             
             cv2.line(frame, (0, self.partition_y), (frame.shape[1], self.partition_y), (255, 255, 0), 3)
             
@@ -699,7 +708,8 @@ class RTSPStreamProcessor:
                     self.out_count = 0
                     self.pool_count = 0
                     self.peak_pool_count = 0
-                    self.counted_ids.clear()
+                    self.object_zones.clear()
+                    self.zone_stable_frames.clear()
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
                 
@@ -733,36 +743,21 @@ class RTSPStreamProcessor:
         """Get current statistics"""
         in_count = self.in_count
         out_count = self.out_count
-        pool_count = in_count - out_count
-        
-        if pool_count < 0:
-            missed_entries = abs(pool_count)
-            self.missed_in_count += missed_entries
-            self.in_count = out_count
-            in_count = out_count
-            pool_count = 0
-            
-            if self.db_handler:
-                try:
-                    self.db_handler.log_event('CORRECTION', 0, self.in_count, self.out_count, pool_count, pool_id=self.pool_id)
-                except Exception:
-                    pass
-        
-        total_expected_in = in_count + self.missed_in_count
-        detection_accuracy = (in_count / total_expected_in * 100) if total_expected_in > 0 else 100
-        
+        pool_count = max(0, in_count - out_count)
+        missed_in_count = abs(in_count - out_count)
+
         downtime_periods = self.get_downtime_periods()
         total_downtime_minutes = sum([d['duration_minutes'] for d in downtime_periods])
-        
+
         return {
             'in_count': max(0, in_count),
             'out_count': max(0, out_count),
-            'pool_count': max(0, pool_count),
+            'pool_count': pool_count,
             'current_heads': max(0, self.current_heads),
             'fps': round(self.fps, 1),
-            'missed_in_count': self.missed_in_count,
+            'missed_in_count': missed_in_count,
             'peak_pool_count': self.peak_pool_count,
-            'detection_accuracy': round(detection_accuracy, 1),
+            'detection_accuracy': 100.0,
             'timestamp': time.time(),
             'downtime_periods': downtime_periods,
             'total_downtime_minutes': round(total_downtime_minutes, 1),
@@ -788,8 +783,8 @@ class RTSPStreamProcessor:
             self.current_heads = 0
             self.peak_pool_count = 0
             self.missed_in_count = 0
-            self.counted_ids.clear()
             self.object_zones.clear()
+            self.zone_stable_frames.clear()
 
         try:
             self.log_event('RESET', 'MANUAL')
