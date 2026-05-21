@@ -400,12 +400,14 @@ class RTSPStreamProcessor:
             config_file = 'head_counter_config.json'
 
         self.invert_direction = False
+        self.flip_vertical = False
 
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
                 config = json.load(f)
                 config_type = config.get('type', 'zones')
                 self.invert_direction = config.get('invert_direction', False)
+                self.flip_vertical = config.get('flip_vertical', False)
 
                 if config_type == 'two_lines':
                     in_line = config.get('in_line_y', 500)
@@ -505,8 +507,8 @@ class RTSPStreamProcessor:
             pass
         
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)
-        self.cap.set(cv2.CAP_PROP_FPS, 15)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+        self.cap.set(cv2.CAP_PROP_FPS, 25)
         
         return self.cap.isOpened()
     
@@ -518,7 +520,7 @@ class RTSPStreamProcessor:
                 conf=self.conf_threshold,
                 iou=self.iou_threshold,
                 verbose=False,
-                imgsz=640,
+                imgsz=416,
                 device=self.device,
                 half=(self.device == 'cuda'),
                 persist=True,
@@ -558,8 +560,12 @@ class RTSPStreamProcessor:
             self.current_heads = len(objects)
 
             frame_height = frame.shape[0]
-            if not hasattr(self, 'partition_y') or self.partition_y > frame_height:
+            if not hasattr(self, 'partition_y'):
                 self.partition_y = frame_height // 2
+            # Clamp partition_y to frame bounds with a warning
+            elif self.partition_y >= frame_height:
+                print(f"⚠️  [{self.pool_id}] partition_y={self.partition_y} >= frame_height={frame_height}, clamping to {frame_height - 10}")
+                self.partition_y = frame_height - 10
 
             # Minimum frames a person must remain in a zone before their departure
             # counts as a crossing. Prevents oscillation near the partition line.
@@ -572,9 +578,11 @@ class RTSPStreamProcessor:
                 prev_stable = self.zone_stable_frames.get(object_id, 0)
 
                 if previous_zone is None or previous_zone == current_zone:
+                    # Same zone — build up stability
                     self.zone_stable_frames[object_id] = prev_stable + 1
+                    self.object_zones[object_id] = current_zone
                 else:
-                    # Zone changed — only count if they were stable in previous zone
+                    # Zone changed — only count and commit if stable in previous zone
                     if prev_stable >= MIN_STABLE_FRAMES:
                         upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
                         lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
@@ -586,9 +594,10 @@ class RTSPStreamProcessor:
                         elif is_out:
                             self.out_count += 1
                             self.log_event('OUT', object_id)
-                    self.zone_stable_frames[object_id] = 0
-
-                self.object_zones[object_id] = current_zone
+                        # Commit zone change and reset stability only on a genuine crossing
+                        self.zone_stable_frames[object_id] = 0
+                        self.object_zones[object_id] = current_zone
+                    # else: brief excursion — treat as noise, keep previous zone and stability
                 cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
                 cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -704,16 +713,26 @@ class RTSPStreamProcessor:
                 current_date = time.strftime('%Y-%m-%d')
                 if current_date != self.last_reset_date:
                     print(f"\n🔄 [{self.pool_id}] Midnight auto-reset: {current_date}")
-                    self.in_count = 0
-                    self.out_count = 0
-                    self.pool_count = 0
-                    self.peak_pool_count = 0
-                    self.object_zones.clear()
-                    self.zone_stable_frames.clear()
+                    with self.lock:
+                        self.in_count = 0
+                        self.out_count = 0
+                        self.pool_count = 0
+                        self.peak_pool_count = 0
+                        self.missed_in_count = 0
+                        self.current_heads = 0
+                        self.object_zones.clear()
+                        self.zone_stable_frames.clear()
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
+                    if self.db_handler:
+                        try:
+                            self.db_handler.reset_daily_summary(pool_id=self.pool_id)
+                            self.update_database_stats()
+                        except Exception as e:
+                            print(f"⚠️  [{self.pool_id}] EOD DB reset error: {e}")
                 
-                frame = cv2.flip(frame, 0)
+                if self.flip_vertical:
+                    frame = cv2.flip(frame, 0)
                 self.frame_count += 1
                 
                 if self.frame_count % 30 == 0:
@@ -928,7 +947,7 @@ def health():
 def main():
     # Configuration for both pools
     # Pool 1 RTSP URL
-    rtsp_url_1 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
+    rtsp_url_1 = "rtsp://admin:Ele%23%23%23313@10.196.211.60:554/"
     rtsp_url_2 = "rtsp://admin:Ele%23%23%23313@10.196.211.59:554/"
     
     model_path = 'yolo11x.pt'
