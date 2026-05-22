@@ -401,6 +401,7 @@ class RTSPStreamProcessor:
 
         self.invert_direction = False
         self.flip_vertical = False
+        self.flip_horizontal = False
 
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
@@ -408,6 +409,7 @@ class RTSPStreamProcessor:
                 config_type = config.get('type', 'zones')
                 self.invert_direction = config.get('invert_direction', False)
                 self.flip_vertical = config.get('flip_vertical', False)
+                self.flip_horizontal = config.get('flip_horizontal', False)
 
                 if config_type == 'two_lines':
                     in_line = config.get('in_line_y', 500)
@@ -507,8 +509,8 @@ class RTSPStreamProcessor:
             pass
         
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
-        self.cap.set(cv2.CAP_PROP_FPS, 25)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)
+        self.cap.set(cv2.CAP_PROP_FPS, 15)
         
         return self.cap.isOpened()
     
@@ -520,7 +522,7 @@ class RTSPStreamProcessor:
                 conf=self.conf_threshold,
                 iou=self.iou_threshold,
                 verbose=False,
-                imgsz=416,
+                imgsz=640,
                 device=self.device,
                 half=(self.device == 'cuda'),
                 persist=True,
@@ -560,12 +562,8 @@ class RTSPStreamProcessor:
             self.current_heads = len(objects)
 
             frame_height = frame.shape[0]
-            if not hasattr(self, 'partition_y'):
+            if not hasattr(self, 'partition_y') or self.partition_y > frame_height:
                 self.partition_y = frame_height // 2
-            # Clamp partition_y to frame bounds with a warning
-            elif self.partition_y >= frame_height:
-                print(f"⚠️  [{self.pool_id}] partition_y={self.partition_y} >= frame_height={frame_height}, clamping to {frame_height - 10}")
-                self.partition_y = frame_height - 10
 
             # Minimum frames a person must remain in a zone before their departure
             # counts as a crossing. Prevents oscillation near the partition line.
@@ -578,11 +576,9 @@ class RTSPStreamProcessor:
                 prev_stable = self.zone_stable_frames.get(object_id, 0)
 
                 if previous_zone is None or previous_zone == current_zone:
-                    # Same zone — build up stability
                     self.zone_stable_frames[object_id] = prev_stable + 1
-                    self.object_zones[object_id] = current_zone
                 else:
-                    # Zone changed — only count and commit if stable in previous zone
+                    # Zone changed — only count if they were stable in previous zone
                     if prev_stable >= MIN_STABLE_FRAMES:
                         upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
                         lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
@@ -594,10 +590,9 @@ class RTSPStreamProcessor:
                         elif is_out:
                             self.out_count += 1
                             self.log_event('OUT', object_id)
-                        # Commit zone change and reset stability only on a genuine crossing
-                        self.zone_stable_frames[object_id] = 0
-                        self.object_zones[object_id] = current_zone
-                    # else: brief excursion — treat as noise, keep previous zone and stability
+                    self.zone_stable_frames[object_id] = 0
+
+                self.object_zones[object_id] = current_zone
                 cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
                 cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -733,6 +728,8 @@ class RTSPStreamProcessor:
                 
                 if self.flip_vertical:
                     frame = cv2.flip(frame, 0)
+                if self.flip_horizontal:
+                    frame = cv2.flip(frame, 1)
                 self.frame_count += 1
                 
                 if self.frame_count % 30 == 0:
@@ -762,8 +759,22 @@ class RTSPStreamProcessor:
         """Get current statistics"""
         in_count = self.in_count
         out_count = self.out_count
-        pool_count = max(0, in_count - out_count)
-        missed_in_count = abs(in_count - out_count)
+        pool_count = in_count - out_count
+
+        if pool_count < 0:
+            missed_entries = abs(pool_count)
+            self.missed_in_count += missed_entries
+            self.in_count = out_count
+            in_count = out_count
+            pool_count = 0
+            if self.db_handler:
+                try:
+                    self.db_handler.log_event('CORRECTION', 0, self.in_count, self.out_count, pool_count, pool_id=self.pool_id)
+                except Exception:
+                    pass
+
+        total_expected_in = in_count + self.missed_in_count
+        detection_accuracy = (in_count / total_expected_in * 100) if total_expected_in > 0 else 100.0
 
         downtime_periods = self.get_downtime_periods()
         total_downtime_minutes = sum([d['duration_minutes'] for d in downtime_periods])
@@ -771,12 +782,12 @@ class RTSPStreamProcessor:
         return {
             'in_count': max(0, in_count),
             'out_count': max(0, out_count),
-            'pool_count': pool_count,
+            'pool_count': max(0, pool_count),
             'current_heads': max(0, self.current_heads),
             'fps': round(self.fps, 1),
-            'missed_in_count': missed_in_count,
+            'missed_in_count': self.missed_in_count,
             'peak_pool_count': self.peak_pool_count,
-            'detection_accuracy': 100.0,
+            'detection_accuracy': round(detection_accuracy, 1),
             'timestamp': time.time(),
             'downtime_periods': downtime_periods,
             'total_downtime_minutes': round(total_downtime_minutes, 1),

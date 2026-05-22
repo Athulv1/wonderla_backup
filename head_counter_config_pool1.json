@@ -1,6 +1,6 @@
 {
   "type": "zones",
-  "invert_direction": false,
+ "invert_direction": false,
   "flip_vertical": false,
   "partition_y": 720
 }
