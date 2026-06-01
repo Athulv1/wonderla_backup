@@ -375,6 +375,8 @@ class RTSPStreamProcessor:
         # Tracking — uses YOLO ByteTrack IDs directly
         self.object_zones = {}
         self.zone_stable_frames = {}  # frames spent in current zone before last transition
+        self.last_count_frame = {}    # frame number when an ID last triggered a count
+        self.counts_lock = threading.Lock()
         
         # Stream state
         self.cap = None
@@ -565,47 +567,64 @@ class RTSPStreamProcessor:
             if not hasattr(self, 'partition_y') or self.partition_y > frame_height:
                 self.partition_y = frame_height // 2
 
-            # Minimum frames a person must remain in a zone before their departure
-            # counts as a crossing. Prevents oscillation near the partition line.
-            MIN_STABLE_FRAMES = 5
+            # A person must remain in a zone for MIN_STABLE_FRAMES consecutive frames
+            # before a zone crossing is counted. Raised to ~1.5s at 15fps to filter
+            # bounding-box jitter that caused 10000+ phantom counts.
+            MIN_STABLE_FRAMES = 20
+            # After counting an ID, ignore that ID for COUNT_COOLDOWN_FRAMES frames.
+            # Prevents the same person being counted repeatedly near the line.
+            COUNT_COOLDOWN_FRAMES = 45
 
-            for object_id, centroid in objects.items():
-                cx, cy = centroid
-                current_zone = 'upper' if cy < self.partition_y else 'lower'
-                previous_zone = self.object_zones.get(object_id)
-                prev_stable = self.zone_stable_frames.get(object_id, 0)
+            with self.counts_lock:
+                for object_id, centroid in objects.items():
+                    cx, cy = centroid
+                    current_zone = 'upper' if cy < self.partition_y else 'lower'
+                    previous_zone = self.object_zones.get(object_id)
+                    prev_stable = self.zone_stable_frames.get(object_id, 0)
 
-                if previous_zone is None or previous_zone == current_zone:
-                    self.zone_stable_frames[object_id] = prev_stable + 1
-                else:
-                    # Zone changed — only count if they were stable in previous zone
-                    if prev_stable >= MIN_STABLE_FRAMES:
-                        upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
-                        lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
-                        is_in = (lower_to_upper if self.invert_direction else upper_to_lower)
-                        is_out = (upper_to_lower if self.invert_direction else lower_to_upper)
-                        if is_in:
-                            self.in_count += 1
-                            self.log_event('IN', object_id)
-                        elif is_out:
-                            self.out_count += 1
-                            self.log_event('OUT', object_id)
-                    self.zone_stable_frames[object_id] = 0
+                    if previous_zone is None or previous_zone == current_zone:
+                        self.zone_stable_frames[object_id] = prev_stable + 1
+                    else:
+                        # Zone changed — only count if stable long enough and not in cooldown
+                        last_counted = self.last_count_frame.get(object_id, -COUNT_COOLDOWN_FRAMES)
+                        in_cooldown = (self.frame_count - last_counted) < COUNT_COOLDOWN_FRAMES
+                        if prev_stable >= MIN_STABLE_FRAMES and not in_cooldown:
+                            upper_to_lower = (previous_zone == 'upper' and current_zone == 'lower')
+                            lower_to_upper = (previous_zone == 'lower' and current_zone == 'upper')
+                            is_in = (lower_to_upper if self.invert_direction else upper_to_lower)
+                            is_out = (upper_to_lower if self.invert_direction else lower_to_upper)
+                            if is_in:
+                                self.in_count += 1
+                                self.last_count_frame[object_id] = self.frame_count
+                                self.log_event('IN', object_id)
+                            elif is_out:
+                                self.out_count += 1
+                                self.last_count_frame[object_id] = self.frame_count
+                                self.log_event('OUT', object_id)
+                        self.zone_stable_frames[object_id] = 0
 
-                self.object_zones[object_id] = current_zone
-                cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-                cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    self.object_zones[object_id] = current_zone
+                    cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+                    cv2.putText(frame, f"ID:{object_id}", (cx - 10, cy - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
             tracked_ids = set(objects.keys())
-            disappeared_ids = set(self.object_zones.keys()) - tracked_ids
-            for obj_id in disappeared_ids:
-                del self.object_zones[obj_id]
-                self.zone_stable_frames.pop(obj_id, None)
+            with self.counts_lock:
+                disappeared_ids = set(self.object_zones.keys()) - tracked_ids
+                for obj_id in disappeared_ids:
+                    del self.object_zones[obj_id]
+                    self.zone_stable_frames.pop(obj_id, None)
+                    self.last_count_frame.pop(obj_id, None)
             
             cv2.line(frame, (0, self.partition_y), (frame.shape[1], self.partition_y), (255, 255, 0), 3)
             
-            self.pool_count = max(0, self.in_count - self.out_count)
+            with self.counts_lock:
+                raw_pool = self.in_count - self.out_count
+                if raw_pool < 0:
+                    self.missed_in_count += abs(raw_pool)
+                    self.in_count = self.out_count
+                    raw_pool = 0
+                self.pool_count = raw_pool
             if self.pool_count > self.peak_pool_count:
                 self.peak_pool_count = self.pool_count
             
@@ -698,6 +717,11 @@ class RTSPStreamProcessor:
                         if not self.connect_stream():
                             continue
                         else:
+                            # Clear stale zone state so reconnect doesn't fire false counts
+                            with self.counts_lock:
+                                self.object_zones.clear()
+                                self.zone_stable_frames.clear()
+                                self.last_count_frame.clear()
                             reconnect_attempts = 0
                             consecutive_errors = 0
                     continue
@@ -709,14 +733,16 @@ class RTSPStreamProcessor:
                 if current_date != self.last_reset_date:
                     print(f"\n🔄 [{self.pool_id}] Midnight auto-reset: {current_date}")
                     with self.lock:
-                        self.in_count = 0
-                        self.out_count = 0
-                        self.pool_count = 0
-                        self.peak_pool_count = 0
-                        self.missed_in_count = 0
-                        self.current_heads = 0
-                        self.object_zones.clear()
-                        self.zone_stable_frames.clear()
+                        with self.counts_lock:
+                            self.in_count = 0
+                            self.out_count = 0
+                            self.pool_count = 0
+                            self.peak_pool_count = 0
+                            self.missed_in_count = 0
+                            self.current_heads = 0
+                            self.object_zones.clear()
+                            self.zone_stable_frames.clear()
+                            self.last_count_frame.clear()
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
                     if self.db_handler:
@@ -757,23 +783,13 @@ class RTSPStreamProcessor:
     
     def get_stats(self):
         """Get current statistics"""
-        in_count = self.in_count
-        out_count = self.out_count
-        pool_count = in_count - out_count
+        with self.counts_lock:
+            in_count = self.in_count
+            out_count = self.out_count
+            pool_count = max(0, in_count - out_count)
+            missed_in = self.missed_in_count
 
-        if pool_count < 0:
-            missed_entries = abs(pool_count)
-            self.missed_in_count += missed_entries
-            self.in_count = out_count
-            in_count = out_count
-            pool_count = 0
-            if self.db_handler:
-                try:
-                    self.db_handler.log_event('CORRECTION', 0, self.in_count, self.out_count, pool_count, pool_id=self.pool_id)
-                except Exception:
-                    pass
-
-        total_expected_in = in_count + self.missed_in_count
+        total_expected_in = in_count + missed_in
         detection_accuracy = (in_count / total_expected_in * 100) if total_expected_in > 0 else 100.0
 
         downtime_periods = self.get_downtime_periods()
@@ -785,7 +801,7 @@ class RTSPStreamProcessor:
             'pool_count': max(0, pool_count),
             'current_heads': max(0, self.current_heads),
             'fps': round(self.fps, 1),
-            'missed_in_count': self.missed_in_count,
+            'missed_in_count': missed_in,
             'peak_pool_count': self.peak_pool_count,
             'detection_accuracy': round(detection_accuracy, 1),
             'timestamp': time.time(),
@@ -807,14 +823,16 @@ class RTSPStreamProcessor:
     def reset_counters(self):
         """Reset runtime counters to zero."""
         with self.lock:
-            self.in_count = 0
-            self.out_count = 0
-            self.pool_count = 0
-            self.current_heads = 0
-            self.peak_pool_count = 0
-            self.missed_in_count = 0
-            self.object_zones.clear()
-            self.zone_stable_frames.clear()
+            with self.counts_lock:
+                self.in_count = 0
+                self.out_count = 0
+                self.pool_count = 0
+                self.current_heads = 0
+                self.peak_pool_count = 0
+                self.missed_in_count = 0
+                self.object_zones.clear()
+                self.zone_stable_frames.clear()
+                self.last_count_frame.clear()
 
         try:
             self.log_event('RESET', 'MANUAL')
@@ -908,6 +926,7 @@ def generate_frames(pool_id):
         if not ret:
             continue
         yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        time.sleep(1 / 15)
 
 
 @app.route('/video_feed/<pool_id>')
