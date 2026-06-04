@@ -117,6 +117,7 @@ class RTSPStreamProcessor:
         self.rtsp_url = rtsp_url
         self.pool_id = pool_id
         self.model = YOLO(model_path)
+        self.model.to('cuda')
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
         self.iou_threshold = 0.60
@@ -180,7 +181,11 @@ class RTSPStreamProcessor:
             with open(config_file, 'r') as f:
                 config = json.load(f)
                 config_type = config.get('type', 'zones')
-                
+                if 'flip_vertical' in config:
+                    self.flip_code = 0 if config['flip_vertical'] else None
+                else:
+                    self.flip_code = config.get('flip', None)
+
                 if config_type == 'two_lines':
                     in_line = config.get('in_line_y', 500)
                     out_line = config.get('out_line_y', 300)
@@ -189,11 +194,12 @@ class RTSPStreamProcessor:
                 else:
                     self.upper_zone = config.get('upper_zone', [0, 0, 640, 120])
                     self.lower_zone = config.get('lower_zone', [0, 120, 640, 288])
-                    self.partition_y = self.upper_zone[3]
+                    self.partition_y = config.get('partition_y', self.upper_zone[3])
                     self.config_type = 'zones'
         else:
             self.partition_y = 360
             self.config_type = 'partition'
+            self.flip_code = 0
     
     def init_log_file(self):
         """Initialize HTML log file"""
@@ -273,7 +279,8 @@ class RTSPStreamProcessor:
         
         os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
         os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
-        cv2.setLogLevel(0)
+        if hasattr(cv2, 'setLogLevel'):
+            cv2.setLogLevel(0)
         
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)
@@ -467,7 +474,8 @@ class RTSPStreamProcessor:
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
                 
-                frame = cv2.flip(frame, 0)
+                if self.flip_code is not None:
+                    frame = cv2.flip(frame, self.flip_code)
                 self.frame_count += 1
                 
                 if self.frame_count % 30 == 0:
@@ -572,6 +580,32 @@ def stats():
     return jsonify(result)
 
 
+def generate_frames(pool_id):
+    processor = processors.get(pool_id)
+    if not processor:
+        return
+    while True:
+        frame = processor.get_frame()
+        if frame is None:
+            time.sleep(0.05)
+            continue
+        h, w = frame.shape[:2]
+        if w > 960:
+            scale = 960 / w
+            frame = cv2.resize(frame, (960, int(h * scale)))
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if not ret:
+            continue
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+
+@app.route('/video_feed/<pool_id>')
+def video_feed(pool_id):
+    if pool_id not in processors:
+        return "Pool not found", 404
+    return Response(generate_frames(pool_id), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
 @app.route('/reset', methods=['POST'])
 def reset_counts():
     """Reset all counters for all pools"""
@@ -602,9 +636,8 @@ def health():
 def main():
     # Configuration for both pools
     # Pool 1 RTSP URL
-    rtsp_url_1 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
-    # Pool 2 RTSP URL - UPDATE THIS with your second RTSP URL
-    rtsp_url_2 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=2subtype=0"
+    rtsp_url_1 = "rtsp://admin:Ele%23%23%23313@10.196.211.60:554/"
+    rtsp_url_2 = "rtsp://admin:Ele%23%23%23313@10.196.211.59:554/"
     
     model_path = 'yolo11x.pt'
     conf_threshold = 0.10

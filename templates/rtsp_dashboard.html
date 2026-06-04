@@ -91,6 +91,11 @@
   /* animation helpers */
   .value-flash{transform:scale(1.08)!important;color:var(--blue-mid)!important}
 
+  /* video feed */
+  .video-feed-box{width:100%;border-radius:var(--radius-sm);overflow:hidden;background:#0a0a1a;position:relative;aspect-ratio:16/9}
+  .video-feed-box img{width:100%;height:100%;object-fit:contain;display:block}
+  .video-feed-box .feed-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4b5563;font-size:.8rem;gap:6px}
+
   @media(max-width:1024px){.content{grid-template-columns:1fr}}
   @media(max-width:768px){.metrics-row{grid-template-columns:repeat(3,1fr)}}
 </style>
@@ -150,6 +155,13 @@
       <!-- POOL 01 -->
       <div class="pool-card">
         <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 01</span></div>
+        <div class="video-feed-box">
+          <img src="/video_feed/pool1" alt="Pool 01 Live Feed" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="feed-offline" style="display:none">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M2 2l20 20M7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2v-4" stroke="#4b5563" stroke-width="2" stroke-linecap="round"/><path d="M16 3l4 4-4 4" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Stream offline
+          </div>
+        </div>
         <div class="stats-row">
           <div class="stat-box entered">
             <div class="stat-top">
@@ -192,6 +204,13 @@
       <!-- POOL 02 -->
       <div class="pool-card">
         <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 02</span></div>
+        <div class="video-feed-box">
+          <img src="/video_feed/pool2" alt="Pool 02 Live Feed" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="feed-offline" style="display:none">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M2 2l20 20M7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2v-4" stroke="#4b5563" stroke-width="2" stroke-linecap="round"/><path d="M16 3l4 4-4 4" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Stream offline
+          </div>
+        </div>
         <div class="stats-row">
           <div class="stat-box entered">
             <div class="stat-top">
