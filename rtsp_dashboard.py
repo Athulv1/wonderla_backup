@@ -340,9 +340,19 @@ class RTSPStreamProcessor:
             try:
                 if torch.cuda.is_available():
                     self.device = 'cuda'
+                    torch.cuda.set_device(0)
             except Exception:
                 self.device = 'cpu'
         self.model = YOLO(model_path)
+        if self.device == 'cuda':
+            self.model.to('cuda')
+            self.model.fuse()
+            _dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+            self.model.track(_dummy, device='cuda', half=True, verbose=False,
+                             imgsz=640, classes=[0], persist=False)
+            print(f"✓ [{pool_id}] YOLO on GPU (FP16) — warmup done")
+        else:
+            print(f"⚠️  [{pool_id}] YOLO running on CPU")
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
         self.iou_threshold = 0.60
@@ -863,8 +873,11 @@ def get_report_data(report_type):
         return jsonify({'success': False, 'message': 'Invalid report type'}), 400
 
     date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
-    result = report_manager.generate_report(report_type, date_str=date_str, send_email=False)
-    return jsonify({'success': True, **result})
+    try:
+        result = report_manager.generate_report(report_type, date_str=date_str, send_email=False)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/reports/generate/<report_type>', methods=['POST'])
@@ -878,12 +891,15 @@ def generate_report(report_type):
     date_str = payload.get('date') or datetime.now().strftime('%Y-%m-%d')
     send_email_now = bool(payload.get('send_email', False))
 
-    result = report_manager.generate_report(
-        report_type,
-        date_str=date_str,
-        send_email=send_email_now,
-    )
-    return jsonify({'success': True, **result})
+    try:
+        result = report_manager.generate_report(
+            report_type,
+            date_str=date_str,
+            send_email=send_email_now,
+        )
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/reports/download/<report_type>', methods=['GET'])
@@ -975,6 +991,11 @@ def health():
 
 
 def main():
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        print(f"✓ cuDNN benchmark mode enabled on {torch.cuda.get_device_name(0)}")
+
     # Configuration for both pools
     # Pool 1 RTSP URL
     rtsp_url_1 = "rtsp://admin:Ele%23%23%23313@10.196.211.60:554/"
