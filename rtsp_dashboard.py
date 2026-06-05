@@ -11,6 +11,7 @@ from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import torch
 import json
 from collections import defaultdict
 from scipy.spatial import distance as dist
@@ -25,6 +26,14 @@ try:
 except ImportError:
     print("⚠️  Database handler not available - running without database")
     DB_AVAILABLE = False
+
+# Import analytics/reporting routes (reports + reset)
+try:
+    from dashboard_analytics import ReportManager, register_analytics_routes
+    ANALYTICS_AVAILABLE = True
+except ImportError:
+    print("⚠️  Analytics module not available - running without reports")
+    ANALYTICS_AVAILABLE = False
 
 
 class CentroidTracker:
@@ -116,8 +125,10 @@ class RTSPStreamProcessor:
     def __init__(self, rtsp_url, pool_id='pool1', model_path='yolo11x.pt', conf_threshold=0.10, box_shrink=0.2):
         self.rtsp_url = rtsp_url
         self.pool_id = pool_id
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = YOLO(model_path)
-        self.model.to('cuda')
+        self.model.to(self.device)
+        print(f"✓ [{pool_id}] Using device: {self.device}")
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
         self.iou_threshold = 0.60
@@ -297,8 +308,8 @@ class RTSPStreamProcessor:
                 iou=self.iou_threshold,
                 verbose=False,
                 imgsz=1280,
-                device='cuda',
-                half=True,
+                device=self.device,
+                half=(self.device == 'cuda'),
                 persist=True,
                 tracker='bytetrack.yaml',
                 max_det=100,
@@ -541,6 +552,15 @@ class RTSPStreamProcessor:
             'has_downtime': len(downtime_periods) > 0
         }
     
+    def reset_counters(self):
+        """Reset all live counters for this pool (manual reset)."""
+        self.in_count = 0
+        self.out_count = 0
+        self.pool_count = 0
+        self.peak_pool_count = 0
+        self.missed_in_count = 0
+        self.counted_ids.clear()
+
     def stop(self):
         """Stop processing"""
         self.is_running = False
@@ -606,18 +626,9 @@ def video_feed(pool_id):
     return Response(generate_frames(pool_id), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-@app.route('/reset', methods=['POST'])
-def reset_counts():
-    """Reset all counters for all pools"""
-    for pool_id, processor in processors.items():
-        if processor:
-            processor.in_count = 0
-            processor.out_count = 0
-            processor.pool_count = 0
-            processor.peak_pool_count = 0
-            processor.missed_in_count = 0
-            processor.counted_ids.clear()
-    return jsonify({'success': True, 'message': 'All counters reset successfully'})
+# NOTE: The /reset route and analytics report routes are registered via
+# register_analytics_routes() in main(). The reset behaviour is unchanged -
+# it now calls each processor's reset_counters() method.
 
 
 @app.route('/health')
@@ -671,7 +682,27 @@ def main():
     # Start both processors
     processors['pool1'].start()
     processors['pool2'].start()
-    
+
+    # Register analytics report routes + reset route
+    if ANALYTICS_AVAILABLE:
+        report_manager = None
+        if DB_AVAILABLE:
+            try:
+                report_manager = ReportManager()
+                report_manager.start_scheduler()
+                print("✓ Analytics reports enabled (scheduled emails active)")
+            except Exception as e:
+                print(f"⚠️  Could not initialize report manager: {e}")
+        register_analytics_routes(app, processors, report_manager=report_manager)
+    else:
+        # Fallback: keep the reset endpoint available without the analytics module
+        @app.route('/reset', methods=['POST'])
+        def reset_counts():
+            for processor in processors.values():
+                if processor:
+                    processor.reset_counters()
+            return jsonify({'success': True, 'message': 'All counters reset successfully'})
+
     print(f"\n{'='*60}")
     print(f"🎯 Wonderla Dual Pool Monitoring Dashboard")
     print(f"{'='*60}")

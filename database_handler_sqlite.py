@@ -220,6 +220,83 @@ class DatabaseHandler:
             return {'total_in': row[0], 'total_out': row[1], 'net_count': row[2], 'peak_pool_count': row[3]}
         return None
 
+    def get_daily_peak_report(self, date_str):
+        """Per-pool daily totals and peak occupancy for a given date (YYYY-MM-DD)."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute('''
+                SELECT date, pool_id, total_in, total_out, net_count, peak_pool_count
+                FROM daily_summary
+                WHERE date = ?
+                ORDER BY pool_id
+            ''', (date_str,))
+            rows = cur.fetchall()
+        return [
+            {
+                'date': row[0],
+                'pool_id': row[1],
+                'total_entered': row[2] or 0,
+                'total_exited': row[3] or 0,
+                'net_count': row[4] or 0,
+                'peak_pool_count': row[5] or 0,
+            }
+            for row in rows
+        ]
+
+    def get_daily_guest_entry_report(self, date_str):
+        """Per-pool guest entry totals for a given date (YYYY-MM-DD)."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute('''
+                SELECT date, pool_id, total_in
+                FROM daily_summary
+                WHERE date = ?
+                ORDER BY pool_id
+            ''', (date_str,))
+            rows = cur.fetchall()
+        return [
+            {
+                'date': row[0],
+                'pool_id': row[1],
+                'total_entered': row[2] or 0,
+            }
+            for row in rows
+        ]
+
+    def get_hourly_guest_usage_report(self, date_str, hour=None):
+        """Per-pool hourly occupancy (people inside the pool) for a given date.
+
+        The hourly_stats.net_count column stores the live pool occupancy
+        (max(0, in - out)) recorded for that hour, so it represents the number
+        of people inside the pool - not the cumulative entered/exited totals.
+        """
+        with self._lock:
+            cur = self.conn.cursor()
+            if hour is None:
+                cur.execute('''
+                    SELECT date, hour, pool_id, net_count
+                    FROM hourly_stats
+                    WHERE date = ?
+                    ORDER BY hour, pool_id
+                ''', (date_str,))
+            else:
+                cur.execute('''
+                    SELECT date, hour, pool_id, net_count
+                    FROM hourly_stats
+                    WHERE date = ? AND hour = ?
+                    ORDER BY hour, pool_id
+                ''', (date_str, hour))
+            rows = cur.fetchall()
+        return [
+            {
+                'date': row[0],
+                'hour': row[1],
+                'pool_id': row[2],
+                'pool_count': row[3] or 0,
+            }
+            for row in rows
+        ]
+
     def detect_downtime_gaps(self, gap_threshold_minutes=5, pool_id='pool1'):
         today = datetime.now().strftime('%Y-%m-%d')
         with self._lock:

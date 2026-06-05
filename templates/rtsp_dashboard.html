@@ -49,7 +49,9 @@
   .nav-item.active{background:var(--blue);color:var(--white)}
 
   /* content */
-  .content{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .content{flex:1;display:flex;flex-direction:column}
+  .view{flex:1;display:flex;flex-direction:column}
+  .pools-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 
   /* pool card */
   .pool-card{background:var(--white);border-radius:var(--radius);padding:20px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:14px}
@@ -96,8 +98,53 @@
   .video-feed-box img{width:100%;height:100%;object-fit:contain;display:block}
   .video-feed-box .feed-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4b5563;font-size:.8rem;gap:6px}
 
-  @media(max-width:1024px){.content{grid-template-columns:1fr}}
+  @media(max-width:1024px){.pools-grid{grid-template-columns:1fr}}
   @media(max-width:768px){.metrics-row{grid-template-columns:repeat(3,1fr)}}
+
+  /* reset bar (under pool cards) */
+  .reset-bar{display:flex;justify-content:center;margin-top:16px}
+  .reset-btn{display:inline-flex;align-items:center;gap:8px;background:#dc3545;color:#fff;border:none;border-radius:var(--radius-sm);padding:12px 28px;font-family:'Poppins',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;box-shadow:var(--card-shadow);transition:background .2s,transform .1s}
+  .reset-btn:hover{background:#b02a37}
+  .reset-btn:active{transform:scale(.97)}
+  .reset-btn:disabled{opacity:.6;cursor:default}
+  .reset-btn svg{width:18px;height:18px}
+
+  /* analytics view */
+  .analytics-card{background:var(--white);border-radius:var(--radius);padding:24px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:18px}
+  .analytics-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px}
+  .analytics-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+  .analytics-controls input[type=date]{border:1px solid #dde3f5;border-radius:8px;padding:8px 10px;font-family:'Poppins',sans-serif;font-size:.82rem;color:var(--text-dark)}
+  .report-tabs{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:4px}
+  .rtab{border:none;background:transparent;border-radius:7px;padding:8px 14px;font-family:'Poppins',sans-serif;font-size:.78rem;font-weight:600;color:var(--text-grey);cursor:pointer;transition:background .2s,color .2s}
+  .rtab.active{background:var(--blue);color:#fff}
+  .btn-secondary{border:1px solid var(--blue);background:#fff;color:var(--blue);border-radius:8px;padding:8px 16px;font-family:'Poppins',sans-serif;font-size:.78rem;font-weight:700;cursor:pointer}
+  .btn-secondary:hover{background:var(--blue-light)}
+  .btn-secondary:disabled{opacity:.5;cursor:default}
+  .report-status{font-size:.8rem;font-weight:600;color:var(--text-grey);min-height:1em}
+  .report-status.ok{color:var(--blue-mid)}
+  .report-status.err{color:#dc3545}
+
+  /* lightweight bar chart */
+  .chart-wrap{border:1px solid #eef1fb;border-radius:var(--radius-sm);padding:18px;background:#fbfcff}
+  .chart{display:flex;flex-direction:column;gap:14px}
+  .chart-legend{display:flex;flex-wrap:wrap;gap:14px}
+  .chart-legend .leg{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:600;color:var(--text-grey)}
+  .chart-legend .leg i{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .chart-plot{display:flex;align-items:flex-end;gap:18px;height:240px;overflow-x:auto;padding-top:22px}
+  .bar-group{display:flex;flex-direction:column;align-items:center;gap:8px;flex:1;min-width:60px;height:100%}
+  .bar-group .bars{display:flex;align-items:flex-end;justify-content:center;gap:6px;height:100%;width:100%}
+  .bar{width:26px;min-height:2px;border-radius:5px 5px 0 0;position:relative;display:flex;justify-content:center;transition:height .4s}
+  .bar .bar-val{position:absolute;top:-18px;font-size:.68rem;font-weight:700;color:var(--text-dark)}
+  .bar-label{font-size:.7rem;font-weight:600;color:var(--text-grey);text-align:center}
+  .chart .empty{color:var(--text-grey);font-size:.85rem;padding:30px;text-align:center}
+
+  /* report table */
+  .table-wrap{overflow-x:auto}
+  #report-table{width:100%;border-collapse:collapse;font-size:.8rem}
+  #report-table th{background:var(--blue);color:#fff;padding:10px 12px;text-align:left;font-weight:600;white-space:nowrap}
+  #report-table td{padding:9px 12px;border-bottom:1px solid #eef1fb;color:var(--text-dark)}
+  #report-table tr:nth-child(even) td{background:#fafbff}
+  #report-table .empty{color:var(--text-grey);text-align:center;padding:20px}
 </style>
 </head>
 <body>
@@ -133,11 +180,11 @@
   <div class="main">
     <!-- sidebar -->
     <nav class="sidebar">
-      <div class="nav-item active">
+      <div class="nav-item active" data-view="dashboard">
         <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="2" fill="white"/><rect x="13" y="2" width="9" height="9" rx="2" fill="white"/><rect x="2" y="13" width="9" height="9" rx="2" fill="white"/><rect x="13" y="13" width="9" height="9" rx="2" fill="white"/></svg>
         Dashboard
       </div>
-      <div class="nav-item">
+      <div class="nav-item" data-view="analytics">
         <svg viewBox="0 0 24 24" fill="none"><path d="M3 18l5-7 4 4 4-6 5 4" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="21" x2="21" y2="21" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
         Analytics
       </div>
@@ -152,6 +199,8 @@
     </nav>
 
     <div class="content">
+     <div id="dashboard-view" class="view">
+      <div class="pools-grid">
       <!-- POOL 01 -->
       <div class="pool-card">
         <div class="pool-title">Live Pool Monitoring –<span>&nbsp;Pool 01</span></div>
@@ -249,6 +298,35 @@
           <div class="metric"><div class="metric-label">▲ Peak Today</div><div class="metric-value" id="p2-peak">0</div></div>
         </div>
       </div>
+      </div><!-- /pools-grid -->
+
+      <div class="reset-bar">
+        <button id="reset-btn" class="reset-btn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Reset All Counts
+        </button>
+      </div>
+     </div><!-- /dashboard-view -->
+
+     <div id="analytics-view" class="view" style="display:none">
+       <div class="analytics-card">
+         <div class="analytics-head">
+           <div class="pool-title">Analytics &amp; Reports</div>
+           <div class="analytics-controls">
+             <input type="date" id="report-date">
+             <div class="report-tabs">
+               <button class="rtab active" data-type="daily_peak">Daily Peak</button>
+               <button class="rtab" data-type="daily_guest_entry">Guest Entry</button>
+               <button class="rtab" data-type="hourly_guest_usage">Hourly Usage</button>
+             </div>
+             <button id="report-download" class="btn-secondary" disabled>⬇ Download Excel</button>
+           </div>
+         </div>
+         <div id="report-status" class="report-status"></div>
+         <div class="chart-wrap"><div id="report-chart" class="chart"></div></div>
+         <div class="table-wrap"><table id="report-table"></table></div>
+       </div>
+     </div>
     </div>
   </div>
 
@@ -324,6 +402,173 @@ updateClock();
 setInterval(updateClock, 1000);
 updateStats();
 setInterval(updateStats, 500);
+
+/* ---------- View switching (sidebar) ---------- */
+let analyticsLoaded = false;
+document.querySelectorAll('.nav-item').forEach(nav => {
+  nav.addEventListener('click', () => {
+    const view = nav.dataset.view;
+    if (!view) return;  // History / Settings not wired yet
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    nav.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+    const target = document.getElementById(view + '-view');
+    if (target) target.style.display = 'flex';
+    if (view === 'analytics' && !analyticsLoaded) {
+      analyticsLoaded = true;
+      loadReport();
+    }
+  });
+});
+
+/* ---------- Reset button ---------- */
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if (!confirm('Reset ALL counters for both pools? This cannot be undone.')) return;
+  const btn = document.getElementById('reset-btn');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'Resetting…';
+  fetch('/reset', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      btn.textContent = d.success ? '✓ Counters reset' : 'Reset failed';
+      updateStats();
+    })
+    .catch(() => { btn.textContent = 'Reset failed'; })
+    .finally(() => {
+      setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1500);
+    });
+});
+
+/* ---------- Analytics reports ---------- */
+let currentReportType = 'daily_peak';
+let currentReportFile = null;
+
+function prettify(key) {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderChart(chart) {
+  const el = document.getElementById('report-chart');
+  el.innerHTML = '';
+  if (!chart || !chart.labels.length) {
+    el.innerHTML = '<div class="empty">No data available for this date.</div>';
+    return;
+  }
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  chart.datasets.forEach(ds => {
+    const item = document.createElement('span');
+    item.className = 'leg';
+    item.innerHTML = '<i style="background:' + ds.color + '"></i>' + ds.label;
+    legend.appendChild(item);
+  });
+  el.appendChild(legend);
+
+  let max = 0;
+  chart.datasets.forEach(ds => ds.data.forEach(v => { if (v > max) max = v; }));
+  max = max || 1;
+
+  const plot = document.createElement('div');
+  plot.className = 'chart-plot';
+  chart.labels.forEach((label, i) => {
+    const group = document.createElement('div');
+    group.className = 'bar-group';
+    const bars = document.createElement('div');
+    bars.className = 'bars';
+    chart.datasets.forEach(ds => {
+      const v = ds.data[i] || 0;
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = (v / max * 100) + '%';
+      bar.style.background = ds.color;
+      bar.title = ds.label + ': ' + v;
+      const val = document.createElement('span');
+      val.className = 'bar-val';
+      val.textContent = v;
+      bar.appendChild(val);
+      bars.appendChild(bar);
+    });
+    const lab = document.createElement('div');
+    lab.className = 'bar-label';
+    lab.textContent = label;
+    group.appendChild(bars);
+    group.appendChild(lab);
+    plot.appendChild(group);
+  });
+  el.appendChild(plot);
+}
+
+function renderTable(rows) {
+  const t = document.getElementById('report-table');
+  if (!rows || !rows.length) {
+    t.innerHTML = '<tr><td class="empty">No records for this date.</td></tr>';
+    return;
+  }
+  const cols = Object.keys(rows[0]);
+  let html = '<thead><tr>' + cols.map(c => '<th>' + prettify(c) + '</th>').join('') + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    html += '<tr>' + cols.map(c => '<td>' + (r[c] !== null && r[c] !== undefined ? r[c] : '') + '</td>').join('') + '</tr>';
+  });
+  html += '</tbody>';
+  t.innerHTML = html;
+}
+
+function loadReport() {
+  const date = document.getElementById('report-date').value;
+  const status = document.getElementById('report-status');
+  const dlBtn = document.getElementById('report-download');
+  status.textContent = 'Loading…';
+  status.className = 'report-status';
+  dlBtn.disabled = true;
+  currentReportFile = null;
+  fetch('/api/reports/' + currentReportType + '?date=' + encodeURIComponent(date))
+    .then(r => r.json())
+    .then(d => {
+      if (!d.success) {
+        status.textContent = d.message || 'Failed to load report';
+        status.className = 'report-status err';
+        renderChart(null);
+        renderTable([]);
+        return;
+      }
+      currentReportFile = d.filename;
+      status.textContent = d.report_name + ' — ' + d.date + ' (' + d.rows.length + ' record' + (d.rows.length === 1 ? '' : 's') + ')';
+      status.className = 'report-status ok';
+      dlBtn.disabled = false;
+      renderChart(d.chart);
+      renderTable(d.rows);
+    })
+    .catch(e => {
+      status.textContent = 'Error: ' + e;
+      status.className = 'report-status err';
+    });
+}
+
+document.querySelectorAll('.rtab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.rtab').forEach(x => x.classList.remove('active'));
+    tab.classList.add('active');
+    currentReportType = tab.dataset.type;
+    loadReport();
+  });
+});
+
+document.getElementById('report-date').addEventListener('change', loadReport);
+
+document.getElementById('report-download').addEventListener('click', () => {
+  if (!currentReportFile) return;
+  window.location.href = '/api/reports/download/' + currentReportType +
+    '?filename=' + encodeURIComponent(currentReportFile);
+});
+
+(function initReportDate() {
+  const d = new Date();
+  const iso = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  document.getElementById('report-date').value = iso;
+})();
 </script>
 </body>
 </html>
