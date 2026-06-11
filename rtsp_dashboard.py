@@ -35,6 +35,14 @@ except ImportError:
     print("⚠️  Analytics module not available - running without reports")
     ANALYTICS_AVAILABLE = False
 
+# Import per-hour model confidence monitor
+try:
+    from model_confidence_monitor import ModelConfidenceMonitor
+    CONF_MONITOR_AVAILABLE = True
+except ImportError:
+    print("⚠️  Model confidence monitor not available")
+    CONF_MONITOR_AVAILABLE = False
+
 
 class CentroidTracker:
     """Track objects across frames using centroids and bounding boxes"""
@@ -132,6 +140,11 @@ class RTSPStreamProcessor:
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
         self.iou_threshold = 0.60
+
+        # Per-hour model confidence monitor (logs avg/min/max confidence)
+        self.conf_monitor = None
+        if CONF_MONITOR_AVAILABLE:
+            self.conf_monitor = ModelConfidenceMonitor(pool_id, conf_threshold)
         
         # Database handler
         self.db_handler = None
@@ -317,16 +330,20 @@ class RTSPStreamProcessor:
             )
             
             detections = []
+            frame_confidences = []
             min_box_area = 400
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    
+
                     box_area = (x2 - x1) * (y2 - y1)
                     if box_area < min_box_area:
                         continue
-                    
+
+                    if box.conf is not None and len(box.conf) > 0:
+                        frame_confidences.append(float(box.conf[0]))
+
                     if self.box_shrink > 0:
                         w = x2 - x1
                         h = y2 - y1
@@ -334,10 +351,13 @@ class RTSPStreamProcessor:
                         shrink_h = h * self.box_shrink / 2
                         x1, y1 = x1 + shrink_w, y1 + shrink_h
                         x2, y2 = x2 - shrink_w, y2 - shrink_h
-                    
+
                     detections.append([x1, y1, x2, y2])
                     cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-            
+
+            if self.conf_monitor:
+                self.conf_monitor.record(frame_confidences)
+
             objects = self.tracker.update(detections)
             self.current_heads = len(objects)
             
@@ -481,6 +501,7 @@ class RTSPStreamProcessor:
                     self.out_count = 0
                     self.pool_count = 0
                     self.peak_pool_count = 0
+                    self.missed_in_count = 0
                     self.counted_ids.clear()
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
@@ -566,6 +587,8 @@ class RTSPStreamProcessor:
         self.is_running = False
         if self.cap:
             self.cap.release()
+        if self.conf_monitor:
+            self.conf_monitor.flush()
         if self.db_handler:
             self.update_database_stats()
             self.db_handler.close()
