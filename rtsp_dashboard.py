@@ -13,10 +13,13 @@ import numpy as np
 from ultralytics import YOLO
 import torch
 import json
-from collections import defaultdict
+from collections import defaultdict, deque
 from scipy.spatial import distance as dist
 import time
 import threading
+
+# Telegram low-FPS alerting
+from fps_alert_monitor import start_fps_monitor
 
 # Import database handler (SQLite - no server required)
 try:
@@ -188,6 +191,12 @@ class RTSPStreamProcessor:
         self.fps = 0
         self.frame_count = 0
         self.start_time = time.time()
+
+        # Rolling FPS tracking (recent window) for live display + low-FPS alerts
+        self.fps_window = 5.0          # seconds
+        self.fps_lock = threading.Lock()
+        self._read_times = deque()     # timestamps of successful stream reads (input FPS)
+        self._proc_times = deque()     # timestamps of completed frame processing (processing FPS)
         self.last_reset_date = time.strftime('%Y-%m-%d')
         
         # Logging
@@ -493,7 +502,8 @@ class RTSPStreamProcessor:
                 
                 consecutive_errors = 0
                 reconnect_attempts = 0
-                
+                self._record_fps_event(self._read_times)  # input FPS: a frame arrived from the stream
+
                 current_date = time.strftime('%Y-%m-%d')
                 if current_date != self.last_reset_date:
                     print(f"\n🔄 [{self.pool_id}] Midnight auto-reset: {current_date}")
@@ -518,16 +528,43 @@ class RTSPStreamProcessor:
                 
                 last_valid_frame = frame.copy()
                 processed_frame = self.process_frame(frame)
-                
-                elapsed = time.time() - self.start_time
-                self.fps = self.frame_count / elapsed if elapsed > 0 else 0
-                
+                self._record_fps_event(self._proc_times)  # processing FPS: a frame finished processing
+
+                # Live FPS = rolling recent processing rate (reflects current slowdowns)
+                _, self.fps = self.get_recent_fps()
+
                 with self.lock:
                     self.frame = processed_frame
             except Exception as e:
                 print(f"[{self.pool_id}] Loop error: {str(e)[:50]}")
                 time.sleep(0.1)
     
+    def _record_fps_event(self, times):
+        """Append a timestamp and drop entries older than the rolling window."""
+        now = time.time()
+        with self.fps_lock:
+            times.append(now)
+            cutoff = now - self.fps_window
+            while times and times[0] < cutoff:
+                times.popleft()
+
+    def get_recent_fps(self):
+        """Return (input_fps, processing_fps) over the recent rolling window.
+
+        Computed relative to *now*, so a stalled stream correctly reads as ~0
+        even if no new frames have arrived.
+        """
+        now = time.time()
+        cutoff = now - self.fps_window
+        with self.fps_lock:
+            while self._read_times and self._read_times[0] < cutoff:
+                self._read_times.popleft()
+            while self._proc_times and self._proc_times[0] < cutoff:
+                self._proc_times.popleft()
+            input_fps = len(self._read_times) / self.fps_window
+            proc_fps = len(self._proc_times) / self.fps_window
+        return input_fps, proc_fps
+
     def get_frame(self):
         """Get current frame"""
         with self.lock:
@@ -557,13 +594,16 @@ class RTSPStreamProcessor:
         
         downtime_periods = self.get_downtime_periods()
         total_downtime_minutes = sum([d['duration_minutes'] for d in downtime_periods])
-        
+
+        input_fps, proc_fps = self.get_recent_fps()
+
         return {
             'in_count': max(0, in_count),
             'out_count': max(0, out_count),
             'pool_count': max(0, pool_count),
             'current_heads': max(0, self.current_heads),
-            'fps': round(self.fps, 1),
+            'fps': round(proc_fps, 1),
+            'input_fps': round(input_fps, 1),
             'missed_in_count': self.missed_in_count,
             'peak_pool_count': self.peak_pool_count,
             'detection_accuracy': round(detection_accuracy, 1),
@@ -617,7 +657,7 @@ def stats():
         else:
             result[pool_id] = {
                 'in_count': 0, 'out_count': 0, 'pool_count': 0,
-                'current_heads': 0, 'fps': 0, 'missed_in_count': 0,
+                'current_heads': 0, 'fps': 0, 'input_fps': 0, 'missed_in_count': 0,
                 'peak_pool_count': 0, 'timestamp': time.time()
             }
     return jsonify(result)
@@ -705,6 +745,9 @@ def main():
     # Start both processors
     processors['pool1'].start()
     processors['pool2'].start()
+
+    # Start Telegram low-FPS alert monitor (alerts when input or processing FPS < 7)
+    start_fps_monitor(processors)
 
     # Register analytics report routes + reset route
     if ANALYTICS_AVAILABLE:
