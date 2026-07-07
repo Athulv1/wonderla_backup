@@ -461,41 +461,58 @@ class RTSPStreamProcessor:
         thread.start()
     
     def _process_loop(self):
-        """Main processing loop with robust error handling"""
+        """Main processing loop with robust error handling.
+
+        Reconnects indefinitely with capped exponential backoff so that a
+        reachable, streaming camera never stays stuck at 0 fps after a
+        transient outage. The reader thread only exits when is_running is
+        cleared (shutdown/reset) - it never permanently gives up on its own.
+        """
         reconnect_attempts = 0
-        max_reconnects = 10
         last_valid_frame = None
         consecutive_errors = 0
-        
-        if not self.connect_stream():
-            print(f"[{self.pool_id}] Failed to connect to RTSP stream")
+
+        def _backoff(attempt):
+            # 0.5s, 1s, 2s ... capped at 30s so retries continue forever
+            return min(30.0, 0.5 * (2 ** min(attempt, 6)))
+
+        # Initial connect - keep retrying instead of giving up if the camera
+        # is momentarily unreachable when the app starts.
+        while self.is_running and not self.connect_stream():
+            reconnect_attempts += 1
+            wait = _backoff(reconnect_attempts)
+            if reconnect_attempts % 5 == 1:
+                print(f"[{self.pool_id}] Waiting for RTSP stream (attempt {reconnect_attempts}, retry in {wait:.0f}s)")
+            time.sleep(wait)
+        if not self.is_running:
             return
-        
+        reconnect_attempts = 0
         print(f"✓ [{self.pool_id}] Connected to RTSP stream")
-        
+
         while self.is_running:
             try:
                 ret, frame = self.cap.read()
-                
+
                 if not ret or frame is None:
                     consecutive_errors += 1
                     if consecutive_errors % 5 == 1:
-                        print(f"[{self.pool_id}] Stream error (attempt {reconnect_attempts + 1}/{max_reconnects})")
-                    
+                        print(f"[{self.pool_id}] Stream read error (reconnect attempt {reconnect_attempts})")
+
                     if last_valid_frame is not None:
                         with self.lock:
                             self.frame = last_valid_frame
-                    
+
                     if consecutive_errors > 10:
-                        self.cap.release()
-                        time.sleep(0.5)
+                        # Stream dropped - reconnect with capped backoff and
+                        # keep retrying forever (never break out of the loop).
+                        try:
+                            self.cap.release()
+                        except Exception:
+                            pass
                         reconnect_attempts += 1
-                        if reconnect_attempts >= max_reconnects:
-                            print(f"[{self.pool_id}] Max reconnect attempts reached")
-                            break
-                        if not self.connect_stream():
-                            continue
-                        else:
+                        time.sleep(_backoff(reconnect_attempts))
+                        if self.connect_stream():
+                            print(f"✓ [{self.pool_id}] Reconnected after {reconnect_attempts} attempt(s)")
                             reconnect_attempts = 0
                             consecutive_errors = 0
                     continue
