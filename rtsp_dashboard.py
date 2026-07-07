@@ -633,7 +633,7 @@ def health():
 def main():
     # Configuration for both pools
     # Pool 1 RTSP URL
-    rtsp_url_1 = "rtsp://Testing:Test%401234%23@10.196.211.60:554/cam/realmonitor?chanel=1subtype=0"
+    rtsp_url_1 = "rtsp://admin:Ele%23%23%23313@10.196.211.60:554/"
     rtsp_url_2 = "rtsp://admin:Ele%23%23%23313@10.196.211.59:554/"
     
     model_path = 'yolo11x.pt'
