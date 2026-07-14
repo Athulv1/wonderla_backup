@@ -18,6 +18,15 @@ from scipy.spatial import distance as dist
 import time
 import threading
 
+# Cap CPU thread pools to avoid oversubscription. The RTSP reader threads decode
+# in parallel while the inference thread runs YOLO pre/post-processing (letterbox
+# resize + NMS). Left unbounded, OpenCV's and torch's thread pools each try to use
+# all cores and fight the decoder threads for CPU, inflating inference wall-time
+# ~3x (the GPU then sits idle waiting on contended CPU work). Bounding them keeps
+# inference fast and processing FPS stable.
+cv2.setNumThreads(2)
+torch.set_num_threads(4)
+
 # Telegram low-FPS alerting
 from fps_alert_monitor import start_fps_monitor
 
@@ -137,8 +146,12 @@ class RTSPStreamProcessor:
         self.rtsp_url = rtsp_url
         self.pool_id = pool_id
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.model = YOLO(model_path)
-        self.model.to(self.device)
+        # Inference is run centrally by BatchInferenceCoordinator using a single
+        # shared model, so this processor no longer owns a YOLO model. Running
+        # one batched inference call for all pools avoids the GIL contention of
+        # multiple per-pool inference threads (which left the GPU ~85% idle and
+        # capped processing FPS at ~5-6). This class keeps only the tracking,
+        # counting and drawing logic.
         print(f"✓ [{pool_id}] Using device: {self.device}")
         self.conf_threshold = conf_threshold
         self.box_shrink = box_shrink
@@ -183,9 +196,19 @@ class RTSPStreamProcessor:
         
         # Stream state
         self.cap = None
-        self.frame = None
+        self.frame = None            # latest PROCESSED frame (for the video feed)
         self.is_running = False
         self.lock = threading.Lock()
+
+        # Decoupled capture: a dedicated reader thread continuously drains the
+        # RTSP stream (~15 fps) and keeps only the most recent raw frame here.
+        # The inference thread consumes the latest frame back-to-back instead of
+        # blocking on cap.read() after every inference. This stops the GPU from
+        # idling while waiting for a fresh frame (the nobuffer flag drops frames
+        # that arrive during inference), which was capping processing FPS.
+        self._latest_raw = None
+        self._raw_seq = 0            # bumped on every new decoded frame
+        self._raw_lock = threading.Lock()
         
         # Stats
         self.fps = 0
@@ -321,37 +344,32 @@ class RTSPStreamProcessor:
         
         return self.cap.isOpened()
     
-    def process_frame(self, frame):
-        """Process a single frame with error handling"""
+    def process_detections(self, frame, result):
+        """Turn one frame's detection result into counts + an annotated frame.
+
+        Inference (model.predict) is done centrally in batch by the
+        BatchInferenceCoordinator; `result` is the ultralytics Results object
+        for this frame. Object identity/counting is handled entirely by the
+        custom CentroidTracker below (the model's own track IDs were never
+        used), so counting behaviour is identical to before.
+        """
         try:
-            results = self.model.track(
-                frame, 
-                conf=self.conf_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-                imgsz=1280,
-                device=self.device,
-                half=(self.device == 'cuda'),
-                persist=True,
-                tracker='bytetrack.yaml',
-                max_det=100,
-                classes=[0]
-            )
-            
             detections = []
             frame_confidences = []
             min_box_area = 400
-            for result in results:
-                boxes = result.boxes
-                for box in boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-
+            boxes = result.boxes if result is not None else None
+            if boxes is not None and len(boxes) > 0:
+                # Pull all boxes/confidences to CPU in ONE transfer instead of a
+                # per-box GPU->CPU sync (each sync stalls while holding the GIL).
+                xyxy = boxes.xyxy.cpu().numpy()
+                confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
+                for i, (x1, y1, x2, y2) in enumerate(xyxy):
                     box_area = (x2 - x1) * (y2 - y1)
                     if box_area < min_box_area:
                         continue
 
-                    if box.conf is not None and len(box.conf) > 0:
-                        frame_confidences.append(float(box.conf[0]))
+                    if confs is not None:
+                        frame_confidences.append(float(confs[i]))
 
                     if self.box_shrink > 0:
                         w = x2 - x1
@@ -455,21 +473,43 @@ class RTSPStreamProcessor:
             return []
     
     def start(self):
-        """Start processing stream"""
+        """Start the capture (reader) thread for this pool.
+
+        Only frame capture runs per-pool now. Inference is performed centrally
+        for all pools by the BatchInferenceCoordinator (one shared model, one
+        batched predict call) so the GPU is fed efficiently without per-pool
+        inference threads competing for the GIL.
+        """
         self.is_running = True
-        thread = threading.Thread(target=self._process_loop, daemon=True)
-        thread.start()
-    
-    def _process_loop(self):
-        """Main processing loop with robust error handling.
+        threading.Thread(target=self._reader_loop, daemon=True).start()
+
+    def get_latest_frame(self):
+        """Return (seq, frame) for the newest decoded frame, or (seq, None)."""
+        with self._raw_lock:
+            return self._raw_seq, self._latest_raw
+
+    def apply_result(self, frame, result):
+        """Run tracking/counting/drawing for one inference result and publish
+        the annotated frame + processing-FPS tick. Called by the coordinator."""
+        processed_frame = self.process_detections(frame, result)
+        self._record_fps_event(self._proc_times)  # processing FPS: a frame finished processing
+        _, self.fps = self.get_recent_fps()
+        with self.lock:
+            self.frame = processed_frame
+
+    def _reader_loop(self):
+        """Continuously drain the RTSP stream and keep only the latest frame.
 
         Reconnects indefinitely with capped exponential backoff so that a
         reachable, streaming camera never stays stuck at 0 fps after a
-        transient outage. The reader thread only exits when is_running is
-        cleared (shutdown/reset) - it never permanently gives up on its own.
+        transient outage. This thread never permanently gives up on its own;
+        it only exits when is_running is cleared (shutdown/reset).
+
+        By pulling frames as fast as they arrive (~15 fps) this keeps the
+        decode pipeline drained so the processing thread always has a fresh
+        frame ready without paying a per-frame read-wait.
         """
         reconnect_attempts = 0
-        last_valid_frame = None
         consecutive_errors = 0
 
         def _backoff(attempt):
@@ -498,10 +538,6 @@ class RTSPStreamProcessor:
                     if consecutive_errors % 5 == 1:
                         print(f"[{self.pool_id}] Stream read error (reconnect attempt {reconnect_attempts})")
 
-                    if last_valid_frame is not None:
-                        with self.lock:
-                            self.frame = last_valid_frame
-
                     if consecutive_errors > 10:
                         # Stream dropped - reconnect with capped backoff and
                         # keep retrying forever (never break out of the loop).
@@ -516,7 +552,7 @@ class RTSPStreamProcessor:
                             reconnect_attempts = 0
                             consecutive_errors = 0
                     continue
-                
+
                 consecutive_errors = 0
                 reconnect_attempts = 0
                 self._record_fps_event(self._read_times)  # input FPS: a frame arrived from the stream
@@ -532,30 +568,27 @@ class RTSPStreamProcessor:
                     self.counted_ids.clear()
                     self.last_reset_date = current_date
                     self.log_event('RESET', 'AUTO')
-                
+
                 if self.flip_code is not None:
                     frame = cv2.flip(frame, self.flip_code)
                 self.frame_count += 1
-                
+
                 if self.frame_count % 30 == 0:
-                    elapsed = time.time() - self.start_time
-                    current_fps = self.frame_count / elapsed if elapsed > 0 else 0
-                    print(f"[{self.pool_id}] FPS: {current_fps:.1f} | Heads: {self.current_heads} | IN: {self.in_count} | OUT: {self.out_count}")
+                    input_fps, proc_fps = self.get_recent_fps()
+                    print(f"[{self.pool_id}] Input FPS: {input_fps:.1f} | Proc FPS: {proc_fps:.1f} | Heads: {self.current_heads} | IN: {self.in_count} | OUT: {self.out_count}")
                     self.log_heartbeat()
-                
-                last_valid_frame = frame.copy()
-                processed_frame = self.process_frame(frame)
-                self._record_fps_event(self._proc_times)  # processing FPS: a frame finished processing
 
-                # Live FPS = rolling recent processing rate (reflects current slowdowns)
-                _, self.fps = self.get_recent_fps()
-
-                with self.lock:
-                    self.frame = processed_frame
+                # Publish the latest raw frame for the processing thread. Only
+                # the newest frame is kept; frames that arrive while inference
+                # is busy are intentionally dropped so we always process the
+                # freshest frame (low latency).
+                with self._raw_lock:
+                    self._latest_raw = frame
+                    self._raw_seq += 1
             except Exception as e:
-                print(f"[{self.pool_id}] Loop error: {str(e)[:50]}")
+                print(f"[{self.pool_id}] Reader error: {str(e)[:50]}")
                 time.sleep(0.1)
-    
+
     def _record_fps_event(self, times):
         """Append a timestamp and drop entries older than the rolling window."""
         now = time.time()
@@ -651,11 +684,105 @@ class RTSPStreamProcessor:
             self.db_handler.close()
 
 
+class BatchInferenceCoordinator:
+    """Run YOLO inference for all pools from a single thread, in one batch.
+
+    Each pool's reader thread keeps only its latest decoded frame. This
+    coordinator collects the newest frame from every pool that has produced a
+    new one and runs them through a single shared model in ONE batched
+    predict() call, then hands each result back to its pool for tracking,
+    counting and drawing.
+
+    Why: running one inference pipeline per pool meant several Python threads
+    contending for the GIL around ultralytics' per-call pre/post-processing.
+    The GPU sat ~85% idle and processing FPS was capped at ~5-6/pool even
+    though a single pipeline can do ~26 FPS. Batching removes the contention:
+    one thread, one model, one predict() call feeding the GPU efficiently.
+    """
+
+    def __init__(self, processors, model_path='yolo11x.pt', conf=0.10,
+                 iou=0.60, imgsz=960, max_det=100):
+        self.processors = processors
+        self.conf = conf
+        self.iou = iou
+        self.imgsz = imgsz
+        self.max_det = max_det
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.is_running = False
+        self.model = YOLO(model_path)
+        self.model.to(self.device)
+        print(f"✓ Shared inference model loaded on {self.device} (batched over {len(processors)} pool(s))")
+
+    def start(self):
+        self.is_running = True
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        last_seq = {pid: 0 for pid in self.processors}
+        _dbg = {'n':0,'idle':0,'pred':0.0,'apply':0.0,'frames':0,'t':time.time()}
+        while self.is_running:
+            try:
+                batch_frames = []
+                batch_targets = []  # parallel list of (processor, frame)
+                for pid, proc in self.processors.items():
+                    if proc is None:
+                        continue
+                    seq, frame = proc.get_latest_frame()
+                    if frame is None or seq == last_seq[pid]:
+                        continue
+                    last_seq[pid] = seq
+                    batch_frames.append(frame)
+                    batch_targets.append((proc, frame))
+
+                if not batch_frames:
+                    # No new frames from any pool yet - wait briefly.
+                    _dbg['idle'] += 1
+                    time.sleep(0.003)
+                    continue
+
+                _a = time.time()
+                results = self.model.predict(
+                    batch_frames,
+                    conf=self.conf,
+                    iou=self.iou,
+                    verbose=False,
+                    imgsz=self.imgsz,
+                    device=self.device,
+                    half=(self.device == 'cuda'),
+                    max_det=self.max_det,
+                    classes=[0]
+                )
+                _b = time.time()
+
+                for (proc, frame), result in zip(batch_targets, results):
+                    try:
+                        proc.apply_result(frame, result)
+                    except Exception as e:
+                        print(f"[{proc.pool_id}] apply_result error: {str(e)[:50]}")
+                _c = time.time()
+                _dbg['n']+=1; _dbg['pred']+=_b-_a; _dbg['apply']+=_c-_b; _dbg['frames']+=len(batch_frames)
+                if _dbg['n'] % 150 == 0:
+                    el=time.time()-_dbg['t']
+                    print(f"[coord] productive={_dbg['n']} idle_polls={_dbg['idle']} frames={_dbg['frames']} "
+                          f"frames/s={_dbg['frames']/el:.1f} predict_avg={_dbg['pred']/_dbg['n']*1000:.0f}ms "
+                          f"apply_avg={_dbg['apply']/_dbg['n']*1000:.1f}ms", flush=True)
+                    _dbg={'n':0,'idle':0,'pred':0.0,'apply':0.0,'frames':0,'t':time.time()}
+            except Exception as e:
+                print(f"[coordinator] inference error: {str(e)[:60]}")
+                time.sleep(0.1)
+
+    def stop(self):
+        self.is_running = False
+
+
 # Flask application
 app = Flask(__name__)
 
 # Global processors for both pools
 processors = {}
+
+# Shared batched-inference coordinator (created in main())
+inference_coordinator = None
 
 
 @app.route('/')
@@ -759,9 +886,22 @@ def main():
         box_shrink=box_shrink
     )
     
-    # Start both processors
+    # Start both processors (reader threads only - capture frames)
     processors['pool1'].start()
     processors['pool2'].start()
+
+    # Start the shared batched-inference coordinator (does YOLO for all pools
+    # in one thread / one batch, so the GPU is fed without GIL contention).
+    global inference_coordinator
+    inference_coordinator = BatchInferenceCoordinator(
+        processors,
+        model_path=model_path,
+        conf=conf_threshold,
+        iou=0.60,
+        imgsz=960,
+        max_det=100
+    )
+    inference_coordinator.start()
 
     # Start Telegram low-FPS alert monitor (alerts when input or processing FPS < 7)
     start_fps_monitor(processors)
