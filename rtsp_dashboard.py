@@ -313,24 +313,31 @@ class RTSPStreamProcessor:
     
     def connect_stream(self):
         """Connect to RTSP stream with maximum error recovery"""
+        # Low-latency capture: keep FFmpeg's input queues tiny so the frame we
+        # process is always near-live. A large buffer_size/reorder_queue/
+        # max_delay builds a FIFO backlog that never drains (arrival rate ~=
+        # read rate), so cap.read() keeps returning frames that are 10-15s old
+        # even though the reader keeps only the latest one. Shrinking these
+        # (and BUFFERSIZE=1 below) keeps end-to-end latency ~1s.
         if sys.platform == 'win32':
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                 "rtsp_transport;tcp|"
-                "buffer_size;16777216|"
-                "max_delay;3000000|"
-                "reorder_queue_size;1000|"
+                "buffer_size;102400|"
+                "max_delay;500000|"
+                "reorder_queue_size;0|"
                 "stimeout;10000000|"
-                "analyzeduration;10000000|"
-                "probesize;10000000|"
+                "analyzeduration;1000000|"
+                "probesize;1000000|"
                 "err_detect;ignore_err|"
                 "fflags;discardcorrupt+nobuffer|"
+                "flags;low_delay|"
                 "loglevel;fatal"
             )
         else:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                "rtsp_transport;tcp|buffer_size;16777216|max_delay;3000000|"
-                "reorder_queue_size;1000|stimeout;10000000|err_detect;ignore_err|"
-                "fflags;discardcorrupt+nobuffer|loglevel;fatal"
+                "rtsp_transport;tcp|buffer_size;102400|max_delay;500000|"
+                "reorder_queue_size;0|stimeout;10000000|err_detect;ignore_err|"
+                "fflags;discardcorrupt+nobuffer|flags;low_delay|loglevel;fatal"
             )
         
         os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
@@ -339,7 +346,7 @@ class RTSPStreamProcessor:
             cv2.setLogLevel(0)
         
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap.set(cv2.CAP_PROP_FPS, 15)
         
         return self.cap.isOpened()
@@ -463,14 +470,30 @@ class RTSPStreamProcessor:
                 print(f"⚠️  [{self.pool_id}] Heartbeat error: {e}")
     
     def get_downtime_periods(self):
-        """Detect downtime periods from system health logs"""
+        """Detect downtime periods from system health logs (cached).
+
+        detect_downtime_gaps() is an expensive SQLite scan (~200ms). The /stats
+        endpoint is polled ~2x/sec by the dashboard, and running this query on
+        every poll (for every pool) held the GIL for hundreds of ms/sec in the
+        Flask threads, starving the inference thread and cutting processing FPS
+        by ~3x. Downtime changes slowly, so we refresh at most once per 60s and
+        serve a cached result the rest of the time.
+        """
         if not self.db_handler:
             return []
+        now = time.time()
+        cache = getattr(self, '_downtime_cache', None)
+        cache_ts = getattr(self, '_downtime_cache_ts', 0)
+        if cache is not None and (now - cache_ts) < 60:
+            return cache
         try:
-            return self.db_handler.detect_downtime_gaps(gap_threshold_minutes=5, pool_id=self.pool_id)
+            periods = self.db_handler.detect_downtime_gaps(gap_threshold_minutes=5, pool_id=self.pool_id)
         except Exception as e:
             print(f"⚠️  [{self.pool_id}] Downtime detection error: {e}")
-            return []
+            periods = cache if cache is not None else []
+        self._downtime_cache = periods
+        self._downtime_cache_ts = now
+        return periods
     
     def start(self):
         """Start the capture (reader) thread for this pool.
@@ -719,7 +742,6 @@ class BatchInferenceCoordinator:
 
     def _loop(self):
         last_seq = {pid: 0 for pid in self.processors}
-        _dbg = {'n':0,'idle':0,'pred':0.0,'apply':0.0,'frames':0,'t':time.time()}
         while self.is_running:
             try:
                 batch_frames = []
@@ -736,11 +758,9 @@ class BatchInferenceCoordinator:
 
                 if not batch_frames:
                     # No new frames from any pool yet - wait briefly.
-                    _dbg['idle'] += 1
                     time.sleep(0.003)
                     continue
 
-                _a = time.time()
                 results = self.model.predict(
                     batch_frames,
                     conf=self.conf,
@@ -752,21 +772,12 @@ class BatchInferenceCoordinator:
                     max_det=self.max_det,
                     classes=[0]
                 )
-                _b = time.time()
 
                 for (proc, frame), result in zip(batch_targets, results):
                     try:
                         proc.apply_result(frame, result)
                     except Exception as e:
                         print(f"[{proc.pool_id}] apply_result error: {str(e)[:50]}")
-                _c = time.time()
-                _dbg['n']+=1; _dbg['pred']+=_b-_a; _dbg['apply']+=_c-_b; _dbg['frames']+=len(batch_frames)
-                if _dbg['n'] % 150 == 0:
-                    el=time.time()-_dbg['t']
-                    print(f"[coord] productive={_dbg['n']} idle_polls={_dbg['idle']} frames={_dbg['frames']} "
-                          f"frames/s={_dbg['frames']/el:.1f} predict_avg={_dbg['pred']/_dbg['n']*1000:.0f}ms "
-                          f"apply_avg={_dbg['apply']/_dbg['n']*1000:.1f}ms", flush=True)
-                    _dbg={'n':0,'idle':0,'pred':0.0,'apply':0.0,'frames':0,'t':time.time()}
             except Exception as e:
                 print(f"[coordinator] inference error: {str(e)[:60]}")
                 time.sleep(0.1)
